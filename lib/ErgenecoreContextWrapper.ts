@@ -36,13 +36,10 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
 
   public constructor(request: Request) {
     this.request = request;
-    // Phase 11.2: Lazy URL initialization - only create when needed
-    // Phase 11.3: Lazy Map initialization - only create when setValue is called
-    // Lazy response headers initialization - only create when middleware sets headers
   }
 
   /**
-   * Lazy-initialized URL getter (Phase 11.2)
+   * Lazy-initialized URL getter
    *
    * URL object is only created when actually accessed, saving allocation
    * for routes that don't use query parameters.
@@ -56,7 +53,7 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
   }
 
   /**
-   * Lazy-initialized values Map getter (Phase 11.3)
+   * Lazy-initialized values Map getter
    *
    * Map is only created when actually needed (setValue/getValue called),
    * saving allocation for simple routes that don't store context values.

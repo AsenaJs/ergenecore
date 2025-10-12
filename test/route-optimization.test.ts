@@ -12,7 +12,7 @@ const mockLogger: ServerLogger = {
   warn: mock(() => {}),
 };
 
-describe('Phase 8.1: Base Path Extraction', () => {
+describe('Base Path Extraction', () => {
   test('should extract base path from simple path', () => {
     const adapter = new Ergenecore(mockLogger);
 
@@ -95,7 +95,7 @@ describe('Phase 8.1: Base Path Extraction', () => {
   });
 });
 
-describe('Phase 8.2: Common Middleware Detection', () => {
+describe('Common Middleware Detection', () => {
   // Mock middleware classes
   class AuthMiddleware {
 
@@ -244,7 +244,7 @@ describe('Phase 8.2: Common Middleware Detection', () => {
   });
 });
 
-describe('Phase 8.3: Route Grouping', () => {
+describe('Route Grouping', () => {
   test('should group routes by base path', () => {
     const adapter = new Ergenecore(mockLogger);
 
@@ -315,7 +315,7 @@ describe('Phase 8.3: Route Grouping', () => {
   });
 });
 
-describe('Phase 8.4: Integration Test', () => {
+describe('Integration Test', () => {
   const TEST_PORT = 3008;
   let adapter: Ergenecore;
 

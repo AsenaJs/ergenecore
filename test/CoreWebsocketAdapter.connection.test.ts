@@ -11,7 +11,7 @@ const mockLogger: ServerLogger = {
   profile: mock(() => {}),
 };
 
-describe('CoreWebsocketAdapter - Phase 6: Connection Tracking & Heartbeat', () => {
+describe('CoreWebsocketAdapter - Connection Tracking & Heartbeat', () => {
   let adapter: ErgenecoreWebsocketAdapter;
 
   beforeEach(() => {

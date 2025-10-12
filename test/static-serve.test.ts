@@ -14,7 +14,6 @@ const mockLogger: ServerLogger = {
 };
 
 /**
- * Phase 7.1: Basic File Serving Tests
  *
  * Tests for basic static file serving functionality using Bun.file()
  *
@@ -24,7 +23,7 @@ const mockLogger: ServerLogger = {
  * - Bun.file() usage verification
  */
 
-describe('Phase 7.1: Basic Static File Serving', () => {
+describe('Basic Static File Serving', () => {
   let adapter: Ergenecore;
   const TEST_PORT = 3007;
   const TEST_HOST = 'localhost';
@@ -157,7 +156,6 @@ describe('Phase 7.1: Basic Static File Serving', () => {
 });
 
 /**
- * Phase 7.2: Path Rewriting & Security Tests
  *
  * Tests for path security and rewriting functionality:
  * - Path traversal attack prevention (../)
@@ -165,7 +163,7 @@ describe('Phase 7.1: Basic Static File Serving', () => {
  * - Path normalization
  * - rewriteRequestPath edge cases
  */
-describe('Phase 7.2: Path Rewriting & Security', () => {
+describe('Path Rewriting & Security', () => {
   let adapter: Ergenecore;
   const TEST_PORT = 3008;
   const TEST_HOST = 'localhost';
@@ -307,7 +305,6 @@ describe('Phase 7.2: Path Rewriting & Security', () => {
 });
 
 /**
- * Phase 7.3: onFound/onNotFound Hooks Tests
  *
  * Tests for hook execution and override behavior:
  * - onFound hook called when file exists
@@ -316,7 +313,7 @@ describe('Phase 7.2: Path Rewriting & Security', () => {
  * - override: false continues file serving
  * - Context passing to hooks
  */
-describe('Phase 7.3: onFound/onNotFound Hooks', () => {
+describe('onFound/onNotFound Hooks', () => {
   let adapter: Ergenecore;
   const TEST_PORT = 3009;
   const TEST_HOST = 'localhost';
@@ -561,7 +558,6 @@ describe('Phase 7.3: onFound/onNotFound Hooks', () => {
 });
 
 /**
- * Phase 7.4: Cache Headers & MIME Types Tests
  *
  * Tests for performance optimization features:
  * - Cache-Control header setting
@@ -570,7 +566,7 @@ describe('Phase 7.3: onFound/onNotFound Hooks', () => {
  * - ETag generation
  * - Last-Modified header
  */
-describe('Phase 7.4: Cache Headers & MIME Types', () => {
+describe('Cache Headers & MIME Types', () => {
   let adapter: Ergenecore;
   const TEST_PORT = 3010;
   const TEST_HOST = 'localhost';

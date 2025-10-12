@@ -11,7 +11,7 @@ const mockLogger: ServerLogger = {
   profile: mock(() => {}),
 };
 
-describe('CoreWebsocketAdapter - Phase 6: Namespace Registration', () => {
+describe('CoreWebsocketAdapter - Namespace Registration', () => {
   let adapter: ErgenecoreWebsocketAdapter;
 
   beforeEach(() => {

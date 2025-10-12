@@ -19,7 +19,7 @@ import * as path from 'path';
 import type { StaticServeExtras, ValidationSchemaWithHook } from './types';
 
 /**
- * Static response headers for performance (Phase 11.3)
+ * Static response headers for performance
  *
  * Pre-allocated header objects to avoid creating new objects for each response.
  * This reduces garbage collection pressure and improves performance.
@@ -263,7 +263,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
   }
 
   /**
-   * Builds Bun native router object from queued routes with Phase 8 optimization
+   * Builds Bun native router object from queued routes
    *
    * Optimizations applied:
    * 1. Base path extraction - Groups routes by static base path
@@ -288,13 +288,13 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
   private buildBunRoutes(): Record<string, any> {
     const routes: Record<string, any> = {};
 
-    // Phase 8.3: Group routes by base path for optimization
+    // Group routes by base path for optimization
     const routeGroups = this.groupRoutesByBasePath(this.routeQueue);
 
     // Process each base path group
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     for (const [_, groupRoutes] of routeGroups) {
-      // Phase 8.2: Extract common middlewares for this group
+      // Extract common middlewares for this group
       const commonMiddlewares = this.extractCommonMiddlewares(groupRoutes);
 
       // Group routes by exact path (same as before)
@@ -315,7 +315,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
         for (const route of pathRoutes) {
           const method = route.method.toUpperCase();
 
-          // Phase 11.1: Fast Path Optimization
+          // Fast Path Optimization
           // Check if route is simple (no middleware, validation, or static serve)
           const isSimpleRoute =
             this.globalMiddlewares.length === 0 &&
@@ -334,7 +334,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
       }
     }
 
-    // Add 404 handler with static headers (Phase 11.3)
+    // Add 404 handler with static headers
     routes['/*'] = () => {
       return new Response(JSON.stringify({ error: 'Not Found' }), {
         status: 404,
@@ -614,7 +614,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
   }
 
   /**
-   * Creates a fast path handler for simple routes (Phase 11.1)
+   * Creates a fast path handler for simple routes
    *
    * This handler is optimized for routes without:
    * - Middlewares (global or route-level)
@@ -637,7 +637,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
         const context = new ErgenecoreContextWrapper(req);
 
         try {
-          // Inject Bun's native route params if present (Phase 11.3 - Optimized)
+          // Inject Bun's native route params if present
           // @ts-ignore - Bun adds params to Request
           if (req.params) {
             // @ts-ignore - Bun adds params to Request
@@ -657,7 +657,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
             return response;
           }
 
-          // Wrap in Response with static headers (Phase 11.3)
+          // Wrap in Response with static headers
           return new Response(JSON.stringify(response), {
             status: 200,
             headers: STATIC_JSON_HEADERS,
@@ -684,7 +684,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
       const context = new ErgenecoreContextWrapper(req);
 
       try {
-        // Inject Bun's native route params if present (Phase 11.3 - Optimized)
+        // Inject Bun's native route params if present
         // @ts-ignore - Bun adds params to Request
         if (req.params) {
           // @ts-ignore - Bun adds params to Request
@@ -704,7 +704,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
           return response;
         }
 
-        // Wrap in Response with static headers (Phase 11.3)
+        // Wrap in Response with static headers
         return new Response(JSON.stringify(response), {
           status: 200,
           headers: STATIC_JSON_HEADERS,
@@ -736,7 +736,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
       // Create context wrapper outside try block so it's accessible in catch
       const context = new ErgenecoreContextWrapper(req);
 
-      // Inject Bun's native route params (Phase 11.3 - Optimized)
+      // Inject Bun's native route params
       // @ts-ignore - Bun adds params to Request
       if (req.params) {
         // @ts-ignore - Bun adds params to Request
@@ -786,7 +786,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
           if (validationResult) return validationResult;
         }
 
-        // Handle static file serving (Phase 7.1)
+        // Handle static file serving
         if (route.staticServe) {
           const staticResponse = await this.serveStaticFile(req, context, route.staticServe);
 
@@ -950,7 +950,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
   }
 
   /**
-   * Serves static files using Bun.file() API (Phase 7.1: Basic Implementation)
+   * Serves static files using Bun.file() API
    *
    * This method handles static file serving with the following features:
    * - Path rewriting via rewriteRequestPath
@@ -1057,7 +1057,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
   }
 
   /**
-   * Builds response headers for static file serving (Phase 7.4)
+   * Builds response headers for static file serving
    *
    * Constructs headers with:
    * - Content-Type (custom MIME or Bun default)
@@ -1109,7 +1109,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
   }
 
   /**
-   * Extracts base path from a route path (Phase 8.1)
+   * Extracts base path from a route path
    *
    * Removes dynamic segments (parameters and wildcards) from the path
    * to find the static base path for grouping routes.
@@ -1148,7 +1148,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
   }
 
   /**
-   * Extracts common middlewares across multiple routes (Phase 8.2)
+   * Extracts common middlewares across multiple routes
    *
    * Identifies middlewares that are present in ALL routes and can be
    * moved to group level for optimization.
@@ -1188,7 +1188,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
   }
 
   /**
-   * Groups routes by their base path (Phase 8.3)
+   * Groups routes by their base path
    *
    * Creates a map of base paths to routes for optimization.
    * Routes with the same base path will share common middlewares.
