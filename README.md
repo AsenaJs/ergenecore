@@ -628,7 +628,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Related Projects
 
-- [Asena.js](https://github.com/asenajs/asena) - The core framework
+- [Asena.js](https://asena.sh) - The core framework
 - [Bun](https://bun.sh) - The JavaScript runtime
 
 ---
