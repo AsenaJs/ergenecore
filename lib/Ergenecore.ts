@@ -10,13 +10,16 @@ import {
   VALIDATOR_METHODS,
   type ValidatorHandler,
 } from '@asenajs/asena/adapter';
-import type { ServerLogger } from '@asenajs/asena/logger';
+import { blue, green, red, type ServerLogger, yellow } from '@asenajs/asena/logger';
+import type { GlobalMiddlewareConfig } from '@asenajs/asena/server/config';
+import { shouldApplyMiddleware } from '@asenajs/asena/utils/patternMatcher';
 import { ErgenecoreWebsocketAdapter } from './ErgenecoreWebsocketAdapter';
 import { type Context, ErgenecoreContextWrapper } from './ErgenecoreContextWrapper';
 import type { Server } from 'bun';
 import * as Bun from 'bun';
 import * as path from 'path';
-import type { StaticServeExtras, ValidationSchemaWithHook } from './types';
+import type { StaticServeExtras, ValidationSchema, ValidationSchemaWithHook } from './types';
+import { HttpException, MiddlewareResponseError } from './errors';
 
 /**
  * Static response headers for performance
@@ -35,7 +38,7 @@ const STATIC_JSON_HEADERS = Object.freeze({ 'Content-Type': 'application/json' }
  * - Zero framework overhead
  * - Built-in parameter extraction
  */
-export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> {
+export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook | ValidationSchema> {
 
   /**
    * Adapter name
@@ -55,7 +58,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
   /**
    * Bun server instance
    */
-  private server!: Server;
+  private server!: Server<any>;
 
   /**
    * Route queue for deferred registration
@@ -80,9 +83,14 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
   private errorHandler?: ErrorHandler<Context>;
 
   /**
-   * Global middlewares
+   * Global middlewares with route configuration
+   * Structure: Array<{ middleware, config }>
+   * Config is optional - if not provided, middleware applies to all routes
    */
-  private globalMiddlewares: BaseMiddleware<Context>[] = [];
+  private globalMiddlewares: Array<{
+    middleware: BaseMiddleware<Context>;
+    config?: GlobalMiddlewareConfig['routes'];
+  }> = [];
 
   private options: AsenaServeOptions = {} satisfies AsenaServeOptions;
 
@@ -119,7 +127,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
     // Queue WebSocket route for building during start()
     this.wsRouteQueue.push(params);
 
-    // Also register WebSocket service with adapter for namespace tracking
+    // Register WebSocket service with adapter using the route path (not namespace)
     if (this.websocketAdapter && params.websocketService) {
       this.websocketAdapter.registerWebSocket(params.websocketService);
     }
@@ -135,13 +143,25 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
   }
 
   /**
-   * Registers a global middleware
+   * Registers a global middleware with optional pattern matching
    *
    * @param middleware - Middleware instance
-   * @param _path - Optional path (not used for global middlewares)
+   * @param config - Optional route configuration for pattern matching
+   *
+   * @example
+   * ```typescript
+   * // Old API (still supported) - applies to all routes
+   * adapter.use(loggerMiddleware);
+   *
+   * // New API with pattern matching - applies only to matching routes
+   * adapter.use(authMiddleware, {
+   *   include: ['/api/*', '/admin/*'],
+   *   exclude: ['/api/health']
+   * });
+   * ```
    */
-  public use(middleware: BaseMiddleware<Context>, _path?: string): void {
-    this.globalMiddlewares.push(middleware);
+  public use(middleware: BaseMiddleware<Context>, config?: GlobalMiddlewareConfig['routes']): void {
+    this.globalMiddlewares.push({ middleware, config });
   }
 
   /**
@@ -182,8 +202,10 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
    * @param port - Optional port to override default
    * @returns Bun server instance
    */
-  public start(port?: number): Server {
+  public start(port?: number): Server<any> {
     // Build routes if not built yet
+    const serverHostname = this._hostname;
+
     if (!this.routesBuilt) {
       // 1. Build HTTP routes
       const httpRoutes = this.buildBunRoutes();
@@ -201,7 +223,6 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
       this.websocketAdapter.prepareWebSocket(this.options.wsOptions);
 
       const serverPort = port ?? this.port;
-      const serverHostname = this._hostname;
 
       // 6. Start Bun server with merged routes
       this.server = Bun.serve({
@@ -210,24 +231,27 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
         hostname: serverHostname,
         routes: finalRoutes,
         websocket: this.websocketAdapter.websocket,
-      });
+      } as any);
 
       // Start WebSocket server (initializes AsenaWebSocketServer for each namespace)
       this.websocketAdapter.startWebsocket(this.server);
 
       this.routesBuilt = true;
 
-      // Log server info and routes
-      const hostDisplay = serverHostname || 'localhost';
-
-      this.logger.info(`Server ready → http://${hostDisplay}:${this.server.port}`);
-
+      // Log controller summary first
       if (this.routeQueue.length > 0 || this.wsRouteQueue.length > 0) {
+        this.logControllerSummary();
+
+        // Then log detailed route list
         this.logger.info(this.buildControllerBasedLog());
       } else {
         this.logger.info('No routes registered');
       }
     }
+
+    const hostDisplay = serverHostname || 'localhost';
+
+    this.logger.info(`Server ready → http://${hostDisplay}:${this.server.port}`);
 
     return this.server;
   }
@@ -315,10 +339,13 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
         for (const route of pathRoutes) {
           const method = route.method.toUpperCase();
 
-          // Fast Path Optimization
+          // Fast Path Optimization with Pattern Matching
+          // ✅ Check if this route has any applicable global middlewares
+          const applicableGlobalMiddlewares = this.getGlobalMiddlewaresForPath(route.path);
+
           // Check if route is simple (no middleware, validation, or static serve)
           const isSimpleRoute =
-            this.globalMiddlewares.length === 0 &&
+            applicableGlobalMiddlewares.length === 0 &&
             (!route.middlewares || route.middlewares.length === 0) &&
             !route.validator &&
             !route.staticServe;
@@ -368,7 +395,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
     const routes: Record<string, any> = {};
 
     for (const wsRoute of this.wsRouteQueue) {
-      const path = wsRoute.path;
+      // Normalize path - ensure it starts with /
+      const path = wsRoute.path.startsWith('/') ? wsRoute.path : `/${wsRoute.path}`;
 
       // Initialize path object
       routes[path] = routes[path] || {};
@@ -387,6 +415,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
    * - Calling await next() to proceed to next middleware
    * - Returning false to stop pipeline (403 response)
    * - Returning Response to send custom response and stop pipeline
+   * - Throwing HttpException to send custom HTTP error response
    * - Throwing error to trigger error handler
    *
    * @param context - Request context
@@ -421,8 +450,13 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
     const next = async (): Promise<void> => {
       const result = await this.executeMiddlewares(context, middlewares, index + 1);
 
-      // If next middleware returned false or Response, throw to stop current middleware
-      if (result === false || result instanceof Response) {
+      // If next middleware returned Response, throw MiddlewareResponseError to propagate it
+      if (result instanceof Response) {
+        throw new MiddlewareResponseError(result);
+      }
+
+      // If next middleware returned false, throw to stop current middleware
+      if (result === false) {
         throw new Error('MIDDLEWARE_CHAIN_STOPPED');
       }
     };
@@ -444,12 +478,22 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
       // Middleware executed successfully
       return true;
     } catch (error) {
-      // If a downstream middleware stopped the chain, propagate the stop
+      // If middleware threw HttpException, convert to Response
+      if (error instanceof HttpException) {
+        return error.getResponse();
+      }
+
+      // If a downstream middleware returned a Response, propagate it
+      if (error instanceof MiddlewareResponseError) {
+        return error.response;
+      }
+
+      // If a downstream middleware stopped the chain with false, propagate the stop
       if (error instanceof Error && error.message === 'MIDDLEWARE_CHAIN_STOPPED') {
         return false;
       }
 
-      // Other errors should be thrown
+      // Other errors should be thrown (will be caught by route handler)
       throw error;
     }
   }
@@ -459,7 +503,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
    *
    * The handler executes in the following order:
    * 1. Create context wrapper
-   * 2. Execute global middlewares (if any return false, reject with 403)
+   * 2. Execute global middlewares (pattern-filtered, if any return false, reject with 403)
    * 3. Execute route-specific middlewares (if any return false, reject with 403)
    * 4. Attempt WebSocket upgrade via server.upgrade()
    * 5. Return undefined if upgrade successful, error response otherwise
@@ -478,14 +522,18 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
    * ```
    */
   private createWebSocketUpgradeHandler(wsRoute: WebsocketRouteParams<Context>) {
+    // ✅ Filter global middlewares by path pattern (ONCE during route building)
+    // This happens at server startup, NOT on every request → zero runtime overhead
+    const applicableGlobalMiddlewares = this.getGlobalMiddlewaresForPath(wsRoute.path);
+
     return async (req: Request): Promise<Response | undefined> => {
       try {
         // Create context wrapper
         const context = new ErgenecoreContextWrapper(req);
 
-        // Execute global middlewares with real next() chain
-        if (this.globalMiddlewares.length > 0) {
-          const result = await this.executeMiddlewares(context, this.globalMiddlewares);
+        // Execute filtered global middlewares with real next() chain
+        if (applicableGlobalMiddlewares.length > 0) {
+          const result = await this.executeMiddlewares(context, applicableGlobalMiddlewares);
 
           // If middleware returned a custom response, return it
           if (result instanceof Response) {
@@ -514,12 +562,13 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
         }
 
         // Attempt WebSocket upgrade
-        const namespace = wsRoute.websocketService.namespace;
+        // Use wsRoute.path (actual route path) instead of namespace (which might be the service name)
         const upgraded = this.server.upgrade(req, {
           data: {
-            path: namespace,
+            path: wsRoute.path,
             id: `conn-${Date.now()}-${Math.random().toString(36).substring(7)}`,
-          },
+            values: context.getWebSocketValue(),
+          } as any,
         });
 
         if (upgraded) {
@@ -529,6 +578,12 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
         // Upgrade failed
         return new Response('WebSocket upgrade failed', { status: 500 });
       } catch (error) {
+        // If HttpException was thrown, convert to Response
+        if (error instanceof HttpException) {
+          return error.getResponse();
+        }
+
+        // Log and handle other errors
         this.logger.error('WebSocket upgrade handler error:', error);
 
         return new Response(
@@ -663,6 +718,11 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
             headers: STATIC_JSON_HEADERS,
           });
         } catch (error) {
+          // If handler threw HttpException, convert to Response
+          if (error instanceof HttpException) {
+            return error.getResponse();
+          }
+
           // Default error handling when no custom error handler is registered
           this.logger.error('Route handler error:', error);
 
@@ -710,6 +770,12 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
           headers: STATIC_JSON_HEADERS,
         });
       } catch (error) {
+        // If handler threw HttpException, convert to Response
+        if (error instanceof HttpException) {
+          return error.getResponse();
+        }
+
+        // Handle other errors with custom error handler
         return this.errorHandler!(error as Error, context);
       }
     };
@@ -721,7 +787,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
    * Wraps the Asena handler with:
    * - CoreContextWrapper for context abstraction
    * - Parameter injection from Bun's native parser
-   * - Global and route middlewares
+   * - Global and route middlewares (pattern-filtered)
    * - Error handling
    *
    * @param route - Route parameters
@@ -732,6 +798,10 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
     route: RouteParams<Context, ValidationSchemaWithHook>,
     _commonMiddlewares: BaseMiddleware<Context>[] = [],
   ) {
+    // ✅ Filter global middlewares by path pattern (ONCE during route building)
+    // This happens at server startup, NOT on every request → zero runtime overhead
+    const applicableGlobalMiddlewares = this.getGlobalMiddlewaresForPath(route.path);
+
     return async (req: Request): Promise<Response> => {
       // Create context wrapper outside try block so it's accessible in catch
       const context = new ErgenecoreContextWrapper(req);
@@ -749,9 +819,9 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
       }
 
       try {
-        // Execute global middlewares with real next() chain
-        if (this.globalMiddlewares.length > 0) {
-          const result = await this.executeMiddlewares(context, this.globalMiddlewares);
+        // Execute filtered global middlewares with real next() chain
+        if (applicableGlobalMiddlewares.length > 0) {
+          const result = await this.executeMiddlewares(context, applicableGlobalMiddlewares);
 
           // If middleware returned a custom response, return it
           if (result instanceof Response) {
@@ -807,7 +877,12 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
           headers: { 'Content-Type': 'application/json' },
         });
       } catch (error) {
-        // Handle errors
+        // If handler or middleware threw HttpException, convert to Response
+        if (error instanceof HttpException) {
+          return error.getResponse();
+        }
+
+        // Handle other errors with custom error handler if available
         if (this.errorHandler) {
           // Pass the original context with params already injected
           return await this.errorHandler(error as Error, context);
@@ -830,11 +905,39 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
   }
 
   /**
+   * Type guard to check if validation schema has hook format
+   *
+   * Discriminates between ValidationSchemaWithHook and plain ValidationSchema.
+   * Uses runtime check for 'schema' property to determine type.
+   *
+   * @param schema - Validation schema to check
+   * @returns true if schema is ValidationSchemaWithHook format
+   *
+   * @example
+   * ```typescript
+   * if (isValidationSchemaWithHook(schema)) {
+   *   // schema.schema and schema.hook are available
+   * } else {
+   *   // schema is a plain Zod schema
+   * }
+   * ```
+   */
+  private isValidationSchemaWithHook(
+    schema: ValidationSchemaWithHook | ValidationSchema,
+  ): schema is ValidationSchemaWithHook {
+    return typeof schema === 'object' && schema !== null && 'schema' in schema;
+  }
+
+  /**
    * Validates request data using Zod schemas
    *
    * Checks each validation target (body, query, param, header) and runs
    * the Zod schema validation. If validation fails and a hook is provided,
    * the hook is called to generate a custom error response.
+   *
+   * Supports two validation formats:
+   * 1. Plain Zod schema: z.object({...})
+   * 2. Schema with hook: { schema: z.object({...}), hook?: (...) => {...} }
    *
    * @param context - Request context
    * @param validator - Validator instance with schema definitions
@@ -842,11 +945,11 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
    */
   private async validateRequest(
     context: Context,
-    validator: BaseValidator<ValidationSchemaWithHook>,
+    validator: BaseValidator<ValidationSchemaWithHook | ValidationSchema>,
   ): Promise<Response | null> {
     // Iterate through all validator methods (body, query, param, header)
     for (const key of VALIDATOR_METHODS) {
-      const validatorHandler: ValidatorHandler<ValidationSchemaWithHook> = validator[key];
+      const validatorHandler: ValidatorHandler<ValidationSchemaWithHook | ValidationSchema> = validator[key];
 
       // Skip if validator not defined for this target
       if (!validatorHandler || typeof validatorHandler.handle !== 'function') {
@@ -856,21 +959,28 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
       // Get validation schema
       const validationSchema = await validatorHandler.handle();
 
-      if (!validationSchema || !validationSchema.schema) {
+      // Skip if no validation schema provided
+      if (!validationSchema) {
         continue;
       }
 
+      // Use type guard to discriminate between formats
+      const schema: ValidationSchema = this.isValidationSchemaWithHook(validationSchema)
+        ? validationSchema.schema
+        : validationSchema;
+
+      const hook = this.isValidationSchemaWithHook(validationSchema) ? (validationSchema.hook ?? null) : null;
+
       // Extract data to validate
       const data = await this.extractValidationData(context, key);
-
       // Run Zod validation
-      const result = validationSchema.schema.safeParse(data);
+      const result = schema.safeParse(data);
 
       // If validation fails
       if (!result.success) {
         // Use custom hook if provided
-        if (validationSchema.hook) {
-          const hookResponse = await validationSchema.hook(result, context);
+        if (hook) {
+          const hookResponse = await hook(result, context);
 
           if (hookResponse) return hookResponse;
         }
@@ -1032,15 +1142,42 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
         }
       }
 
-      // 8. Build response headers
-      const headers = this.buildStaticFileHeaders(resolvedFilePath, staticServe.extra);
+      // 8. Create Bun file response with automatic Content-Type detection
+      const fileResponse = new Response(file);
 
-      // 9. Serve file with Bun.file()
-      // Bun.file() automatically:
-      // - Detects MIME type from file extension
-      // - Performs zero-copy file serving
-      // - Uses SIMD-accelerated reading
-      return new Response(file, { headers });
+      // 9. Build response headers starting with Bun's Content-Type
+      const finalHeaders = new Headers(fileResponse.headers);
+
+      // 10. Add cache validation headers (ETag and Last-Modified)
+      // ETag format: W/"<size>-<lastModified>" (weak validator)
+      const etag = `W/"${file.size}-${file.lastModified}"`;
+
+      finalHeaders.set('ETag', etag);
+
+      // Last-Modified: HTTP date format (RFC 7231)
+      const lastModified = new Date(file.lastModified).toUTCString();
+
+      finalHeaders.set('Last-Modified', lastModified);
+
+      // 11. Add custom headers (can override defaults)
+      const customHeaders = this.buildStaticFileHeaders(resolvedFilePath, staticServe.extra);
+
+      for (const [key, value] of Object.entries(customHeaders)) {
+        finalHeaders.set(key, value);
+      }
+
+      // 12. Add default Cache-Control if not provided
+      // Using 'public, max-age=0' allows caching but requires revalidation
+      if (!finalHeaders.has('Cache-Control')) {
+        finalHeaders.set('Cache-Control', 'public, max-age=0');
+      }
+
+      // 13. Return response with all headers
+      // This preserves Bun's zero-copy file serving while adding cache headers
+      return new Response(fileResponse.body, {
+        status: fileResponse.status,
+        headers: finalHeaders,
+      });
     } catch (error) {
       this.logger.error('Static file serving error:', error);
 
@@ -1080,6 +1217,10 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
    */
   private buildStaticFileHeaders(filePath: string, extras: StaticServeExtras): Record<string, string> {
     const headers: Record<string, string> = {};
+
+    if (!extras) {
+      return headers;
+    }
 
     // 1. Content-Type: Check custom MIME types first
     if (extras.mimes) {
@@ -1321,24 +1462,105 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
   }
 
   /**
-   * Builds controller-based log output
+   * Filters global middlewares for a specific route path
    *
-   * Creates a formatted string showing all routes grouped by controller,
-   * with HTTP and WebSocket routes clearly organized.
+   * Uses pattern matching to determine which middlewares should apply to this path.
+   * Pattern matching happens ONCE during route building (deferred registration),
+   * not on every request, ensuring zero runtime overhead.
    *
-   * @returns Formatted log string
+   * @param path - Route path (e.g., '/api/users', '/users/:id')
+   * @returns Array of middlewares that should apply to this path
+   *
+   * @example
+   * ```typescript
+   * // Given:
+   * // - LoggerMiddleware (no config → applies to all routes)
+   * // - AuthMiddleware (include: ['/api/*'])
+   * // - RateLimitMiddleware (exclude: ['/health'])
+   *
+   * getGlobalMiddlewaresForPath('/api/users')
+   * // => [LoggerMiddleware, AuthMiddleware, RateLimitMiddleware]
+   *
+   * getGlobalMiddlewaresForPath('/health')
+   * // => [LoggerMiddleware, AuthMiddleware] (RateLimit excluded)
+   *
+   * getGlobalMiddlewaresForPath('/public/page')
+   * // => [LoggerMiddleware, RateLimitMiddleware] (Auth not included)
+   * ```
+   */
+  private getGlobalMiddlewaresForPath(path: string): BaseMiddleware<Context>[] {
+    return this.globalMiddlewares
+      .filter(({ config }) => shouldApplyMiddleware(path, config))
+      .map(({ middleware }) => middleware);
+  }
+
+  /**
+   * Logs a summary of registered controllers
+   *
+   * Displays colored success messages for each controller with route counts.
+   * HTTP controllers show total HTTP routes, WebSocket-only controllers are
+   * displayed separately.
    *
    * @example
    * Output format:
    * ```
-   * Registered routes:
+   * ✓ Successfully registered CONTROLLER UserController (2 routes)
+   * ✓ Successfully registered WEBSOCKET ChatController (1 route)
+   * ```
+   */
+  private logControllerSummary(): void {
+    const httpGroups = this.groupRoutesByController();
+    const wsGroups = this.groupWebSocketRoutesByController();
+
+    // Log HTTP controllers
+    for (const [controllerName, group] of httpGroups) {
+      const routeCount = group.routes.length;
+      const routeText = routeCount === 1 ? 'route' : 'routes';
+
+      this.logger.info(
+        `${green('✓')} Successfully registered ${yellow('CONTROLLER')} ${blue(controllerName)} ${yellow(`(${routeCount} ${routeText})`)}`,
+      );
+    }
+
+    // Log WebSocket controllers (only those that don't have HTTP routes)
+    for (const [controllerName, group] of wsGroups) {
+      if (!httpGroups.has(controllerName)) {
+        const routeCount = group.routes.length;
+        const routeText = routeCount === 1 ? 'route' : 'routes';
+
+        this.logger.info(
+          `${green('✓')} Successfully registered ${yellow('WEBSOCKET')} ${blue(controllerName)} ${yellow(`(${routeCount} ${routeText})`)}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Builds controller-based log output with colors
    *
+   * Creates a formatted string showing all routes grouped by controller,
+   * with HTTP controllers listed first, then WebSocket namespaces separately.
+   *
+   * Color scheme:
+   * - Controller name: blue
+   * - Base path: yellow
+   * - GET method: green
+   * - POST method: blue
+   * - PUT method: yellow
+   * - DELETE method: red
+   * - WS method: blue
+   *
+   * @returns Formatted log string with color codes
+   *
+   * @example
+   * Output format:
+   * ```
    *   UserController (/users):
    *     GET /users
    *     GET /users/:id
    *     POST /users
    *
-   *   ChatController (/chat):
+   *   ChatNamespace (chat):
    *     WS /chat
    * ```
    */
@@ -1346,41 +1568,19 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
     const httpGroups = this.groupRoutesByController();
     const wsGroups = this.groupWebSocketRoutesByController();
 
-    // Merge WebSocket groups into HTTP groups
-    for (const [controllerName, wsGroup] of wsGroups) {
-      if (httpGroups.has(controllerName)) {
-        // Add WebSocket routes to existing controller group
-        const httpGroup = httpGroups.get(controllerName)!;
+    // Build log output with colors
+    const lines: string[] = ['']; // Start with empty line for better spacing
 
-        for (const wsRoute of wsGroup.routes) {
-          httpGroup.routes.push({
-            method: 'WS',
-            path: wsRoute.path,
-          });
-        }
-      } else {
-        // Create new group for WebSocket-only controller
-        httpGroups.set(controllerName, {
-          basePath: wsGroup.basePath,
-          routes: wsGroup.routes.map((r) => ({
-            method: 'WS',
-            path: r.path,
-          })),
-        });
-      }
-    }
+    // 1. First, log HTTP-only controllers (sorted alphabetically)
+    const httpOnlyControllers = Array.from(httpGroups.entries())
+      .filter(([controllerName]) => !wsGroups.has(controllerName))
+      .sort(([a], [b]) => a.localeCompare(b));
 
-    // Build log output
-    const lines: string[] = ['Registered routes:', ''];
+    for (const [controllerName, group] of httpOnlyControllers) {
+      lines.push(`  ${blue(controllerName)} ${yellow(`(${group.basePath})`)}`);
 
-    // Sort controllers alphabetically for consistent output
-    const sortedControllers = Array.from(httpGroups.entries()).sort(([a], [b]) => a.localeCompare(b));
-
-    for (const [controllerName, group] of sortedControllers) {
-      lines.push(`  ${controllerName} (${group.basePath}):`);
-
-      // Sort routes: GET first, then POST, PUT, PATCH, DELETE, WS
-      const methodOrder = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'WS'];
+      // Sort routes: GET first, then POST, PUT, PATCH, DELETE
+      const methodOrder = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
       const sortedRoutes = group.routes.sort((a, b) => {
         const orderA = methodOrder.indexOf(a.method);
         const orderB = methodOrder.indexOf(b.method);
@@ -1389,10 +1589,84 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook> 
       });
 
       for (const route of sortedRoutes) {
-        lines.push(`    ${route.method} ${route.path}`);
+        // Colorize method based on type
+        let coloredMethod = route.method;
+
+        if (route.method === 'GET') {
+          coloredMethod = green(route.method);
+        } else if (route.method === 'POST') {
+          coloredMethod = blue(route.method);
+        } else if (route.method === 'PUT') {
+          coloredMethod = yellow(route.method);
+        } else if (route.method === 'DELETE') {
+          coloredMethod = red(route.method);
+        }
+
+        lines.push(`    ${coloredMethod} ${route.path}`);
       }
 
       lines.push(''); // Empty line between controllers
+    }
+
+    // 2. Then, log mixed controllers (HTTP + WebSocket)
+    const mixedControllers = Array.from(httpGroups.entries())
+      .filter(([controllerName]) => wsGroups.has(controllerName))
+      .sort(([a], [b]) => a.localeCompare(b));
+
+    for (const [controllerName, group] of mixedControllers) {
+      // Merge WebSocket routes into this controller
+      const wsGroup = wsGroups.get(controllerName)!;
+      const allRoutes = [
+        ...group.routes,
+        ...wsGroup.routes.map((r) => ({ method: 'WS', path: r.path })),
+      ];
+
+      lines.push(`  ${blue(controllerName)} ${yellow(`(${group.basePath})`)}`);
+
+      // Sort routes: GET first, then POST, PUT, PATCH, DELETE, WS
+      const methodOrder = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'WS'];
+      const sortedRoutes = allRoutes.sort((a, b) => {
+        const orderA = methodOrder.indexOf(a.method);
+        const orderB = methodOrder.indexOf(b.method);
+
+        return orderA - orderB;
+      });
+
+      for (const route of sortedRoutes) {
+        // Colorize method based on type
+        let coloredMethod = route.method;
+
+        if (route.method === 'GET') {
+          coloredMethod = green(route.method);
+        } else if (route.method === 'POST') {
+          coloredMethod = blue(route.method);
+        } else if (route.method === 'PUT') {
+          coloredMethod = yellow(route.method);
+        } else if (route.method === 'DELETE') {
+          coloredMethod = red(route.method);
+        } else if (route.method === 'WS') {
+          coloredMethod = blue(route.method);
+        }
+
+        lines.push(`    ${coloredMethod} ${route.path}`);
+      }
+
+      lines.push(''); // Empty line between controllers
+    }
+
+    // 3. Finally, log WebSocket-only namespaces
+    const wsOnlyNamespaces = Array.from(wsGroups.entries())
+      .filter(([controllerName]) => !httpGroups.has(controllerName))
+      .sort(([a], [b]) => a.localeCompare(b));
+
+    for (const [namespaceName, group] of wsOnlyNamespaces) {
+      lines.push(`  ${blue(namespaceName)} ${yellow(`(${group.basePath})`)}`);
+
+      for (const route of group.routes) {
+        lines.push(`    ${blue('WS')} ${route.path}`);
+      }
+
+      lines.push(''); // Empty line between namespaces
     }
 
     return lines.join('\n');

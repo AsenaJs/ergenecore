@@ -358,6 +358,7 @@ describe('CoreWebsocketAdapter - Namespace Registration', () => {
         namespace: 'chat',
       };
 
+      // Use new API: registerWebSocketWithPath instead of deprecated registerWebSocket
       adapter.registerWebSocket(mockService as AsenaWebSocketService<any>);
 
       const mockServer: any = { upgrade: mock(() => {}) };

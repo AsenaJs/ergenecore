@@ -1,9 +1,12 @@
 [test]
-
+root = "./test"
 coverage = true
 
 coverageSkipTestFiles = true
 
+coveragePathIgnorePatterns = [
+    "lib/defaults/**",
+]
 
 
 [test.reporter]

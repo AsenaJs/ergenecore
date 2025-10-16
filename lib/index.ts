@@ -27,6 +27,9 @@ export { Ergenecore } from './Ergenecore';
 export { ErgenecoreContextWrapper } from './ErgenecoreContextWrapper';
 export { ErgenecoreWebsocketAdapter } from './ErgenecoreWebsocketAdapter';
 
+// Error classes
+export { HttpException } from './errors';
+
 // Factory functions
 export {
   createErgenecoreAdapter,
@@ -39,6 +42,7 @@ export {
 export { ValidationService } from './defaults/ValidationService';
 export { ConfigService } from './defaults/ConfigService';
 export { MiddlewareService } from './defaults/MiddlewareService';
+export { StaticServeService } from './defaults/StaticServeService';
 
 // Types
 export type { Context } from './ErgenecoreContextWrapper';

@@ -28,7 +28,7 @@
  */
 
 import type { Context } from '../ErgenecoreContextWrapper';
-import { MiddlewareService } from './MiddlewareService';
+import { MiddlewareService } from '../defaults/MiddlewareService';
 
 /**
  * CORS configuration options
