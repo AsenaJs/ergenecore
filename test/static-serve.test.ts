@@ -610,7 +610,7 @@ describe('Cache Headers & MIME Types', () => {
       fs.rmSync(CACHE_DIR, { recursive: true, force: true });
     });
 
-    it('should not set Cache-Control when not specified', async () => {
+    it('should set default Cache-Control when not specified', async () => {
       const CACHE_DIR = path.join(STATIC_DIR, 'no-cache');
 
       if (!fs.existsSync(CACHE_DIR)) {
@@ -627,7 +627,7 @@ describe('Cache Headers & MIME Types', () => {
         handler: async (ctx) => ctx.send({ error: 'Should not reach here' }),
         staticServe: {
           root: CACHE_DIR,
-          extra: {}, // No cacheControl
+          extra: {}, // No cacheControl → should use default
           rewriteRequestPath: (path: string) => path.replace('/no-cache', ''),
           onFound: { handler: async () => {}, override: false },
           onNotFound: { handler: async () => {}, override: false },
@@ -639,7 +639,8 @@ describe('Cache Headers & MIME Types', () => {
       const response = await fetch(`http://${TEST_HOST}:${TEST_PORT}/no-cache/file.txt`);
 
       expect(response.status).toBe(200);
-      expect(response.headers.get('Cache-Control')).toBeNull();
+      // Smart defaults: framework sets Cache-Control automatically
+      expect(response.headers.get('Cache-Control')).toBe('public, max-age=0');
 
       await adapter.stop();
       fs.rmSync(CACHE_DIR, { recursive: true, force: true });

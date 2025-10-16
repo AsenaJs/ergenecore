@@ -481,7 +481,7 @@ describe('Validation System', () => {
             }),
             hook: (result, ctx) => {
               if (!result.success) {
-                const errors = result.error.errors.map((err: any) => ({
+                const errors = result.error.issues.map((err: any) => ({
                   field: err.path.join('.'),
                   message: err.message,
                 }));
@@ -562,6 +562,181 @@ describe('Validation System', () => {
       const data = await response.json();
 
       expect(data.error).toBeDefined();
+    });
+  });
+
+  describe('Plain Zod Schema Validation (No Hook Format)', () => {
+    it('should accept plain Zod schema for body validation', async () => {
+      const validator: BaseValidator<any> = {
+        json: {
+          handle: () =>
+            z.object({
+              username: z.string().min(3),
+              email: z.string().email(),
+            }),
+          override: false,
+        },
+      };
+
+      adapter.registerRoute({
+        method: HttpMethod.POST,
+        path: '/register-plain',
+        middlewares: [],
+        validator: validator,
+        handler: async (ctx: Context) => {
+          const body = await ctx.getBody<{ username: string; email: string }>();
+
+          return ctx.send({ registered: true, user: body });
+        },
+      } as any);
+
+      server = adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      // Valid request
+      const response = await fetch(`${baseUrl}/register-plain`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'john', email: 'john@example.com' }),
+      });
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+
+      expect(data.registered).toBe(true);
+      expect(data.user.username).toBe('john');
+    });
+
+    it('should reject invalid data with plain Zod schema', async () => {
+      const validator: BaseValidator<any> = {
+        json: {
+          handle: async () =>
+            z.object({
+              age: z.number().min(18),
+              country: z.string().length(2),
+            }),
+          override: false,
+        },
+      };
+
+      adapter.registerRoute({
+        method: HttpMethod.POST,
+        path: '/verify-plain',
+        middlewares: [],
+        validator: validator,
+        handler: async (ctx: Context) => {
+          return ctx.send({ verified: true });
+        },
+      } as any);
+
+      server = adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      // Invalid data (age < 18, country not 2 chars)
+      const response = await fetch(`${baseUrl}/verify-plain`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ age: 16, country: 'USA' }),
+      });
+
+      expect(response.status).toBe(400);
+      const data = await response.json();
+
+      expect(data.error).toBe('Validation failed');
+      expect(data.details).toBeDefined();
+    });
+
+    it('should support plain Zod schema for query validation', async () => {
+      const validator: BaseValidator<any> = {
+        query: {
+          handle: () =>
+            z.object({
+              sort: z.enum(['asc', 'desc']),
+              limit: z.string().regex(/^\d+$/),
+            }),
+          override: false,
+        },
+      };
+
+      adapter.registerRoute({
+        method: HttpMethod.GET,
+        path: '/items-plain',
+        middlewares: [],
+        validator: validator,
+        handler: async (ctx: Context) => {
+          const sort = await ctx.getQuery('sort');
+          const limit = await ctx.getQuery('limit');
+
+          return ctx.send({ sort, limit });
+        },
+      } as any);
+
+      server = adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const response = await fetch(`${baseUrl}/items-plain?sort=asc&limit=10`);
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+
+      expect(data.sort).toBe('asc');
+      expect(data.limit).toBe('10');
+    });
+
+    it('should work with mixed formats (plain schema + hook schema)', async () => {
+      const validator: BaseValidator<any> = {
+        json: {
+          // Plain Zod schema
+          handle: () =>
+            z.object({
+              title: z.string().min(5),
+            }),
+          override: false,
+        },
+        query: {
+          // Hook format
+          handle: () => ({
+            schema: z.object({
+              draft: z.enum(['true', 'false']),
+            }),
+            hook: (result: any, ctx: Context) => {
+              if (!result.success) {
+                return ctx.send({ error: 'Invalid query params' }, 422);
+              }
+            },
+          }),
+          override: false,
+        },
+      };
+
+      adapter.registerRoute({
+        method: HttpMethod.POST,
+        path: '/create-post-mixed',
+        middlewares: [],
+        validator: validator,
+        handler: async (ctx: Context) => {
+          const body = await ctx.getBody<{ title: string }>();
+          const draft = await ctx.getQuery('draft');
+
+          return ctx.send({ post: body, isDraft: draft === 'true' });
+        },
+      } as any);
+
+      server = adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      // Valid request
+      const response = await fetch(`${baseUrl}/create-post-mixed?draft=true`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'My Blog Post' }),
+      });
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+
+      expect(data.post.title).toBe('My Blog Post');
+      expect(data.isDraft).toBe(true);
     });
   });
 });

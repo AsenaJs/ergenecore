@@ -48,7 +48,7 @@
  */
 
 import type { Context } from '../ErgenecoreContextWrapper';
-import { MiddlewareService } from './MiddlewareService';
+import { MiddlewareService } from '../defaults/MiddlewareService';
 
 /**
  * Token bucket for a single client

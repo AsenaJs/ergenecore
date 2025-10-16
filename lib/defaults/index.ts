@@ -21,5 +21,6 @@
 export { ValidationService } from './ValidationService';
 export { ConfigService } from './ConfigService';
 export { MiddlewareService } from './MiddlewareService';
-export { CorsMiddleware, type CorsOptions } from './CorsMiddleware';
-export { RateLimiterMiddleware, type RateLimiterOptions } from './RateLimiterMiddleware';
+export { StaticServeService } from './StaticServeService';
+export { CorsMiddleware, type CorsOptions } from '../middlewares/CorsMiddleware';
+export { RateLimiterMiddleware, type RateLimiterOptions } from '../middlewares/RateLimiterMiddleware';

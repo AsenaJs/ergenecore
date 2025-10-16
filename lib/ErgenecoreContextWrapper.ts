@@ -1,4 +1,5 @@
-import type {AsenaContext, CookieExtra, SendOptions} from '@asenajs/asena/adapter';
+import type { AsenaContext, CookieExtra, SendOptions } from '@asenajs/asena/adapter';
+import { HttpException } from './errors';
 
 /**
  * CoreContext type alias for CoreContextWrapper
@@ -13,11 +14,6 @@ export type Context = ErgenecoreContextWrapper;
  */
 export class ErgenecoreContextWrapper implements AsenaContext<Request, Response> {
 
-  /**
-   * Get the native Response object (not applicable in wrapper, returns null)
-   */
-  public readonly res = null;
-
   private readonly request: Request;
 
   private _url?: URL;
@@ -29,10 +25,12 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
   private bodyRead = false;
 
   /**
-   * Lazy-initialized response headers Map
-   * Only created when setResponseHeader() is called by middlewares
+   * Lazy-initialized mock Response object
+   * Only created when context.res is accessed (e.g., by middlewares setting headers)
    */
-  private _responseHeaders?: Map<string, string>;
+  private _mockResponse?: {
+    headers: Map<string, string>;
+  };
 
   public constructor(request: Request) {
     this.request = request;
@@ -71,6 +69,22 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
    */
   public get req(): Request {
     return this.request;
+  }
+
+  /**
+   * Get mock Response object (lazy-initialized)
+   *
+   * Provides a Response-like interface for middlewares to set headers.
+   * Only created when accessed, maintaining zero overhead for simple handlers.
+   */
+  public get res(): any {
+    if (!this._mockResponse) {
+      this._mockResponse = {
+        headers: new Map<string, string>(),
+      };
+    }
+
+    return this._mockResponse;
   }
 
   /**
@@ -137,6 +151,24 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
 
   /**
    * Get request body as JSON
+   *
+   * Throws HttpException(400) if JSON is invalid (industry standard behavior).
+   * Empty body is valid and returns empty object {}.
+   *
+   * @throws HttpException - 400 Bad Request if JSON parsing fails
+   * @returns Parsed JSON body
+   *
+   * @example
+   * ```typescript
+   * // Valid JSON
+   * const body = await context.getBody(); // { name: "test" }
+   *
+   * // Empty body
+   * const body = await context.getBody(); // {}
+   *
+   * // Invalid JSON
+   * const body = await context.getBody(); // throws HttpException(400)
+   * ```
    */
   public async getBody<T>(): Promise<T> {
     // Cache body after first read to allow multiple accesses
@@ -146,14 +178,26 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
     }
 
     try {
-      this.bodyCache = await this.request.json();
+      // Get raw text first to check if body is empty
+      const text = await this.request.text();
+
+      // Empty body is valid - return empty object
+      if (!text || text.trim() === '') {
+        this.bodyCache = {};
+        this.bodyRead = true;
+        return this.bodyCache as T;
+      }
+
+      // Parse JSON
+      this.bodyCache = JSON.parse(text);
       this.bodyRead = true;
       return this.bodyCache as T;
     } catch (error) {
-      // If JSON parsing fails or body empty, return empty object
-      this.bodyCache = {};
-      this.bodyRead = true;
-      return this.bodyCache as T;
+      // JSON parsing failed - throw HttpException (industry standard)
+      throw new HttpException(400, {
+        error: 'Invalid JSON in request body',
+        message: error instanceof Error ? error.message : 'Failed to parse JSON',
+      });
     }
   }
 
@@ -174,18 +218,14 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
   /**
    * Set a response header that will be included in the final response
    *
-   * Lazy initialization - Map is only created when first header is set.
-   * Used by middlewares (like CORS) to inject headers into the response.
+   * Uses the mock Response object's headers Map.
+   * This method is compatible with Asena's interface while delegating to res.headers.
    *
    * @param key - Header name
    * @param value - Header value
    */
   public setResponseHeader(key: string, value: string): void {
-    if (!this._responseHeaders) {
-      this._responseHeaders = new Map<string, string>();
-    }
-
-    this._responseHeaders.set(key, value);
+    this.res.headers.set(key, value);
   }
 
   /**
@@ -195,7 +235,7 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
    */
   public send(data: string | any, statusOrOptions?: SendOptions | number): Response {
     const { headers = {}, status = 200 } =
-        typeof statusOrOptions === 'number' ? { status: statusOrOptions } : statusOrOptions || {};
+      typeof statusOrOptions === 'number' ? { status: statusOrOptions } : statusOrOptions || {};
 
     const mergedHeaders = this.mergeHeaders(headers);
 
@@ -269,7 +309,7 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
       (this.request as any).cookies.set(name, cookieValue, extraOptions);
     } else {
       throw new Error(
-          'setCookie() requires Bun native cookie API. ' +
+        'setCookie() requires Bun native cookie API. ' +
           'This method should only be called within Bun.serve() context.',
       );
     }
@@ -292,16 +332,16 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
     // Use Bun native API (available in Bun.serve() context)
     if ('cookies' in this.request && (this.request as any).cookies) {
       const deleteOptions = extraOptions
-          ? {
+        ? {
             path: extraOptions.path,
             domain: extraOptions.domain,
           }
-          : undefined;
+        : undefined;
 
       (this.request as any).cookies.delete(name, deleteOptions);
     } else {
       throw new Error(
-          'deleteCookie() requires Bun native cookie API. ' +
+        'deleteCookie() requires Bun native cookie API. ' +
           'This method should only be called within Bun.serve() context.',
       );
     }
@@ -352,7 +392,7 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
    */
   public html(data: string, statusOrOptions?: SendOptions | number): Response {
     const { headers = {}, status = 200 } =
-        typeof statusOrOptions === 'number' ? { status: statusOrOptions } : statusOrOptions || {};
+      typeof statusOrOptions === 'number' ? { status: statusOrOptions } : statusOrOptions || {};
 
     const mergedHeaders = this.mergeHeaders({ 'Content-Type': 'text/html', ...headers });
 
@@ -369,15 +409,15 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
    * @returns Merged headers object (custom headers override middleware headers)
    */
   private mergeHeaders(customHeaders: Record<string, string> = {}): Record<string, string> {
-    // Fast path: If no middleware headers, return custom headers directly
-    if (!this._responseHeaders || this._responseHeaders.size === 0) {
+    // Fast path: If mock response not created or no headers set, return custom headers directly
+    if (!this._mockResponse || this._mockResponse.headers.size === 0) {
       return customHeaders;
     }
 
     // Merge: middleware headers first, then custom headers (custom takes precedence)
     const merged: Record<string, string> = {};
 
-    this._responseHeaders.forEach((value, key) => {
+    this._mockResponse.headers.forEach((value, key) => {
       merged[key] = value;
     });
 

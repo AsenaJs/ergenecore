@@ -358,6 +358,7 @@ describe('CoreAdapter', () => {
         handler,
       });
 
+      adapter.setPort(0); // Use random available port
       adapter.start();
 
       const response = await fetch(`http://localhost:${adapter['server'].port}/test`);
@@ -383,6 +384,7 @@ describe('CoreAdapter', () => {
         handler,
       });
 
+      adapter.setPort(0); // Use random available port
       adapter.start();
 
       const response = await fetch(`http://localhost:${adapter['server'].port}/users/123`);
@@ -409,6 +411,7 @@ describe('CoreAdapter', () => {
         handler,
       });
 
+      adapter.setPort(0); // Use random available port
       adapter.start();
 
       const response = await fetch(`http://localhost:${adapter['server'].port}/error`);

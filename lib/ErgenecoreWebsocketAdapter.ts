@@ -30,7 +30,7 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
   }
 
   /**
-   * Registers a WebSocket service with namespace validation
+   * Registers a WebSocket service with namespace (base class implementation)
    * @param webSocketService - WebSocket service to register
    */
   public registerWebSocket(webSocketService: AsenaWebSocketService<any>): void {
@@ -38,32 +38,32 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
       throw new Error('WebSocket service is required');
     }
 
-    const namespace = webSocketService.namespace;
-
-    if (!namespace) {
+    if (!webSocketService.namespace) {
       throw new Error('WebSocket namespace is required');
     }
 
-    // Validate namespace format (alphanumeric, hyphens, underscores, slashes)
-    if (!namespace.match(/^[a-zA-Z0-9\-_\/]+$/)) {
+    // Validate namespace format: alphanumeric, hyphens, underscores, and slashes allowed
+    const namespaceRegex = /^[a-zA-Z0-9/_-]+$/;
+
+    if (!namespaceRegex.test(webSocketService.namespace)) {
       throw new Error(
-        `Invalid WebSocket namespace format: "${namespace}". Only alphanumeric characters, hyphens, underscores, and slashes are allowed.`,
+        `Invalid WebSocket namespace format: "${webSocketService.namespace}". Only alphanumeric characters, hyphens, underscores, and slashes are allowed.`,
       );
     }
 
     // Initialize websockets map if needed
-    if (this.websockets === undefined) {
-      this.websockets = new Map<string, AsenaWebSocketService<any>>();
+    if (this._websockets === undefined) {
+      this._websockets = new Map<string, AsenaWebSocketService<any>>();
     }
 
     // Check for duplicate registration
-    if (this.websockets.has(namespace)) {
+    if (this._websockets.has(webSocketService.namespace)) {
       this.logger.warn(
-        `WebSocket namespace "${namespace}" is already registered. Overwriting previous registration...`,
+        `WebSocket namespace "${webSocketService.namespace}" is already registered. Overwriting previous registration...`,
       );
     }
 
-    this.websockets.set(namespace, webSocketService);
+    this._websockets.set(webSocketService.namespace, webSocketService);
   }
 
   /**
@@ -122,7 +122,8 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
 
     this.websocket = {
       open: (ws: ServerWebSocket<WebSocketData>) => {
-        const namespace = ws.data.path;
+        // Normalize to namespace format (remove leading /)
+        const namespace = ws.data.path.replace(/^\//, '');
 
         // Check connection limit
         const limit = this.connectionLimits.get(namespace);
@@ -159,7 +160,8 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
       },
 
       close: (ws: ServerWebSocket<WebSocketData>, code: number, reason: string) => {
-        const namespace = ws.data.path;
+        // Normalize to namespace format (remove leading /)
+        const namespace = ws.data.path.replace(/^\//, '');
 
         // Stop heartbeat
         this.stopHeartbeat(ws.data.id);
@@ -189,7 +191,7 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
    * Starts WebSocket server and initializes AsenaWebSocketServer for each namespace
    * @param server - Bun Server instance
    */
-  public startWebsocket(server: Server): void {
+  public startWebsocket(server: Server<any>): void {
     if (!this.websockets || this.websockets.size < 1) {
       return;
     }
