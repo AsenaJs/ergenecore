@@ -9,7 +9,7 @@
     "README.md",
     "LICENSE"
   ],
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "LibirSoft",
   "license": "MIT",
   "scripts": {
@@ -38,7 +38,7 @@
     "prettier": "^3.6.2"
   },
   "peerDependencies": {
-    "@asenajs/asena": "^0.4.0",
+    "@asenajs/asena": "^0.5.0",
     "typescript": "^5.8.2"
   },
   "dependencies": {
