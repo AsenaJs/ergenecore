@@ -98,28 +98,22 @@ describe('Base Path Extraction', () => {
 describe('Common Middleware Detection', () => {
   // Mock middleware classes
   class AuthMiddleware {
-
     public async handle(_context: Context, next: () => Promise<void>): Promise<void> {
       await next();
     }
-  
-}
+  }
 
   class LogMiddleware {
-
     public async handle(_context: Context, next: () => Promise<void>): Promise<void> {
       await next();
     }
-  
-}
+  }
 
   class RateLimitMiddleware {
-
     public async handle(_context: Context, next: () => Promise<void>) {
       await next();
     }
-  
-}
+  }
 
   test('should detect common middlewares across all routes', () => {
     const adapter = new Ergenecore(mockLogger);
@@ -321,26 +315,22 @@ describe('Integration Test', () => {
 
   // Mock middleware classes with execution tracking
   class AuthMiddleware {
-
     public static executionCount = 0;
 
     public async handle(_context: Context, next: () => Promise<void>): Promise<void> {
       AuthMiddleware.executionCount++;
       await next();
     }
-  
-}
+  }
 
   class LogMiddleware {
-
     public static executionCount = 0;
 
     public async handle(_context: Context, next: () => Promise<void>): Promise<void> {
       LogMiddleware.executionCount++;
       await next();
     }
-  
-}
+  }
 
   beforeAll(() => {
     adapter = new Ergenecore(mockLogger);

@@ -75,7 +75,7 @@ describe('Basic Static File Serving', () => {
     });
 
     // Start server
-    adapter.start(TEST_PORT);
+    await adapter.start(TEST_PORT);
   });
 
   afterAll(async () => {
@@ -213,7 +213,7 @@ describe('Path Rewriting & Security', () => {
     });
 
     // Start server
-    adapter.start(TEST_PORT);
+    await adapter.start(TEST_PORT);
   });
 
   afterAll(async () => {
@@ -356,7 +356,7 @@ describe('onFound/onNotFound Hooks', () => {
         },
         validator: {} as any,
       });
-      adapter.start(TEST_PORT);
+      await adapter.start(TEST_PORT);
 
       const response = await fetch(`http://${TEST_HOST}:${TEST_PORT}/hook-test/test.txt`);
 
@@ -400,7 +400,7 @@ describe('onFound/onNotFound Hooks', () => {
         },
         validator: {} as any,
       });
-      adapter.start(TEST_PORT);
+      await adapter.start(TEST_PORT);
 
       const response = await fetch(`http://${TEST_HOST}:${TEST_PORT}/override-test/test.txt`);
 
@@ -449,7 +449,7 @@ describe('onFound/onNotFound Hooks', () => {
         },
         validator: {} as any,
       });
-      adapter.start(TEST_PORT);
+      await adapter.start(TEST_PORT);
 
       const response = await fetch(`http://${TEST_HOST}:${TEST_PORT}/notfound-test/missing.txt`);
 
@@ -491,7 +491,7 @@ describe('onFound/onNotFound Hooks', () => {
         },
         validator: {} as any,
       });
-      adapter.start(TEST_PORT);
+      await adapter.start(TEST_PORT);
 
       const response = await fetch(`http://${TEST_HOST}:${TEST_PORT}/custom-404/missing.txt`);
 
@@ -544,7 +544,7 @@ describe('onFound/onNotFound Hooks', () => {
         },
         validator: {} as any,
       });
-      adapter.start(TEST_PORT);
+      await adapter.start(TEST_PORT);
 
       const response = await fetch(`http://${TEST_HOST}:${TEST_PORT}/context-test/test.txt`);
 
@@ -599,7 +599,7 @@ describe('Cache Headers & MIME Types', () => {
         },
         validator: {} as any,
       });
-      adapter.start(TEST_PORT);
+      await adapter.start(TEST_PORT);
 
       const response = await fetch(`http://${TEST_HOST}:${TEST_PORT}/cached/cached.js`);
 
@@ -634,7 +634,7 @@ describe('Cache Headers & MIME Types', () => {
         },
         validator: {} as any,
       });
-      adapter.start(TEST_PORT);
+      await adapter.start(TEST_PORT);
 
       const response = await fetch(`http://${TEST_HOST}:${TEST_PORT}/no-cache/file.txt`);
 
@@ -677,7 +677,7 @@ describe('Cache Headers & MIME Types', () => {
         },
         validator: {} as any,
       });
-      adapter.start(TEST_PORT);
+      await adapter.start(TEST_PORT);
 
       const response = await fetch(`http://${TEST_HOST}:${TEST_PORT}/custom-headers/file.txt`);
 
@@ -720,7 +720,7 @@ describe('Cache Headers & MIME Types', () => {
         },
         validator: {} as any,
       });
-      adapter.start(TEST_PORT);
+      await adapter.start(TEST_PORT);
 
       const response = await fetch(`http://${TEST_HOST}:${TEST_PORT}/custom-mime/file.customext`);
 
@@ -755,7 +755,7 @@ describe('Cache Headers & MIME Types', () => {
         },
         validator: {} as any,
       });
-      adapter.start(TEST_PORT);
+      await adapter.start(TEST_PORT);
 
       const response = await fetch(`http://${TEST_HOST}:${TEST_PORT}/default-mime/file.unknownext`);
 
@@ -803,7 +803,7 @@ describe('Cache Headers & MIME Types', () => {
         },
         validator: {} as any,
       });
-      adapter.start(TEST_PORT);
+      await adapter.start(TEST_PORT);
 
       const response = await fetch(`http://${TEST_HOST}:${TEST_PORT}/combined/asset.css`);
 

@@ -30,7 +30,6 @@ import type { Context } from '../ErgenecoreContextWrapper';
  * Implements Asena's middleware service interface with Ergenecore's Context type.
  */
 export abstract class MiddlewareService implements AsenaMiddlewareService<Context> {
-
   /**
    * Middleware handler
    *
@@ -39,5 +38,4 @@ export abstract class MiddlewareService implements AsenaMiddlewareService<Contex
    * @returns Promise that resolves when middleware completes
    */
   public abstract handle(context: Context, next: () => Promise<void>): Promise<any>;
-
 }

@@ -39,7 +39,6 @@ const STATIC_JSON_HEADERS = Object.freeze({ 'Content-Type': 'application/json' }
  * - Built-in parameter extraction
  */
 export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook | ValidationSchema> {
-
   /**
    * Adapter name
    */
@@ -87,10 +86,10 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * Structure: Array<{ middleware, config }>
    * Config is optional - if not provided, middleware applies to all routes
    */
-  private globalMiddlewares: Array<{
+  private globalMiddlewares: {
     middleware: BaseMiddleware<Context>;
     config?: GlobalMiddlewareConfig['routes'];
-  }> = [];
+  }[] = [];
 
   private options: AsenaServeOptions = {} satisfies AsenaServeOptions;
 
@@ -123,13 +122,13 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * });
    * ```
    */
-  public registerWebsocketRoute(params: WebsocketRouteParams<Context>): void {
+  public async registerWebsocketRoute(params: WebsocketRouteParams<Context>): Promise<void> {
     // Queue WebSocket route for building during start()
     this.wsRouteQueue.push(params);
 
     // Register WebSocket service with adapter using the route path (not namespace)
     if (this.websocketAdapter && params.websocketService) {
-      this.websocketAdapter.registerWebSocket(params.websocketService);
+      await this.websocketAdapter.registerWebSocket(params.websocketService);
     }
   }
 
@@ -202,7 +201,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * @param port - Optional port to override default
    * @returns Bun server instance
    */
-  public start(port?: number): Server<any> {
+  public async start(port?: number): Promise<Server<any>> {
     // Build routes if not built yet
     const serverHostname = this._hostname;
 
@@ -220,7 +219,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       const finalRoutes = this.mergeRoutes(httpRoutes, wsRoutes);
 
       // 5. Prepare WebSocket before starting server
-      this.websocketAdapter.prepareWebSocket(this.options.wsOptions);
+      await this.websocketAdapter.prepareWebSocket(this.options.wsOptions);
 
       const serverPort = port ?? this.port;
 
@@ -234,7 +233,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       } as any);
 
       // Start WebSocket server (initializes AsenaWebSocketServer for each namespace)
-      this.websocketAdapter.startWebsocket(this.server);
+      await this.websocketAdapter.startWebsocket(this.server);
 
       this.routesBuilt = true;
 
@@ -329,7 +328,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
           routesByPath.set(route.path, []);
         }
 
-        routesByPath.get(route.path)!.push(route);
+        routesByPath.get(route.path).push(route);
       }
 
       // Build Bun router object for each path
@@ -402,7 +401,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       routes[path] = routes[path] || {};
 
       // Add GET handler for WebSocket upgrade (with middleware chain)
-      routes[path]['GET'] = this.createWebSocketUpgradeHandler(wsRoute);
+      routes[path].GET = this.createWebSocketUpgradeHandler(wsRoute);
     }
 
     return routes;
@@ -623,7 +622,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       // Check if HTTP routes have the same path
       if (httpRoutes[wsPath]) {
         // Check if HTTP route has GET method (collision with WebSocket GET)
-        if (httpRoutes[wsPath]['GET']) {
+        if (httpRoutes[wsPath].GET) {
           throw new Error(
             `Route collision detected at path "${wsPath}": Both HTTP and WebSocket routes define GET method. ` +
               `WebSocket routes use GET for upgrade handshake, so HTTP GET cannot be registered on the same path.`,
@@ -693,12 +692,11 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
         try {
           // Inject Bun's native route params if present
-          // @ts-ignore - Bun adds params to Request
+          // @ts-expect-error - Bun adds params to Request
           if (req.params) {
-            // @ts-ignore - Bun adds params to Request
+            // @ts-expect-error - Bun adds params to Request
             const params = req.params;
 
-            // eslint-disable-next-line guard-for-in
             for (const key in params) {
               context.setValue(`param:${key}`, params[key]);
             }
@@ -745,12 +743,11 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
       try {
         // Inject Bun's native route params if present
-        // @ts-ignore - Bun adds params to Request
+        // @ts-expect-error - Bun adds params to Request
         if (req.params) {
-          // @ts-ignore - Bun adds params to Request
+          // @ts-expect-error - Bun adds params to Request
           const params = req.params;
 
-          // eslint-disable-next-line guard-for-in
           for (const key in params) {
             context.setValue(`param:${key}`, params[key]);
           }
@@ -776,7 +773,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         }
 
         // Handle other errors with custom error handler
-        return this.errorHandler!(error as Error, context);
+        return this.errorHandler(error as Error, context);
       }
     };
   }
@@ -807,12 +804,11 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       const context = new ErgenecoreContextWrapper(req);
 
       // Inject Bun's native route params
-      // @ts-ignore - Bun adds params to Request
+      // @ts-expect-error - Bun adds params to Request
       if (req.params) {
-        // @ts-ignore - Bun adds params to Request
+        // @ts-expect-error - Bun adds params to Request
         const params = req.params;
 
-        // eslint-disable-next-line guard-for-in
         for (const key in params) {
           context.setValue(`param:${key}`, params[key]);
         }
@@ -1268,7 +1264,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    */
   private extractBasePath(path: string): string {
     // Remove trailing slash (except for root)
-    let normalized = path.endsWith('/') && path !== '/' ? path.slice(0, -1) : path;
+    const normalized = path.endsWith('/') && path !== '/' ? path.slice(0, -1) : path;
 
     // Split path into segments
     const segments = normalized.split('/');
@@ -1362,7 +1358,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         groups.set(basePath, []);
       }
 
-      groups.get(basePath)!.push(route);
+      groups.get(basePath).push(route);
     }
 
     return groups;
@@ -1395,11 +1391,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * // }
    * ```
    */
-  private groupRoutesByController(): Map<
-    string,
-    { basePath: string; routes: Array<{ method: string; path: string }> }
-  > {
-    const groups = new Map<string, { basePath: string; routes: Array<{ method: string; path: string }> }>();
+  private groupRoutesByController(): Map<string, { basePath: string; routes: { method: string; path: string }[] }> {
+    const groups = new Map<string, { basePath: string; routes: { method: string; path: string }[] }>();
 
     for (const route of this.routeQueue) {
       const controllerName = route.controllerName || 'Unknown';
@@ -1412,7 +1405,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         });
       }
 
-      groups.get(controllerName)!.routes.push({
+      groups.get(controllerName).routes.push({
         method: route.method.toUpperCase(),
         path: route.path,
       });
@@ -1439,8 +1432,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * // }
    * ```
    */
-  private groupWebSocketRoutesByController(): Map<string, { basePath: string; routes: Array<{ path: string }> }> {
-    const groups = new Map<string, { basePath: string; routes: Array<{ path: string }> }>();
+  private groupWebSocketRoutesByController(): Map<string, { basePath: string; routes: { path: string }[] }> {
+    const groups = new Map<string, { basePath: string; routes: { path: string }[] }>();
 
     for (const wsRoute of this.wsRouteQueue) {
       const controllerName = wsRoute.controllerName || 'Unknown';
@@ -1453,7 +1446,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         });
       }
 
-      groups.get(controllerName)!.routes.push({
+      groups.get(controllerName).routes.push({
         path: wsRoute.path,
       });
     }
@@ -1615,11 +1608,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
     for (const [controllerName, group] of mixedControllers) {
       // Merge WebSocket routes into this controller
-      const wsGroup = wsGroups.get(controllerName)!;
-      const allRoutes = [
-        ...group.routes,
-        ...wsGroup.routes.map((r) => ({ method: 'WS', path: r.path })),
-      ];
+      const wsGroup = wsGroups.get(controllerName);
+      const allRoutes = [...group.routes, ...wsGroup.routes.map((r) => ({ method: 'WS', path: r.path }))];
 
       lines.push(`  ${blue(controllerName)} ${yellow(`(${group.basePath})`)}`);
 
@@ -1671,5 +1661,4 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
     return lines.join('\n');
   }
-
 }

@@ -20,7 +20,6 @@
  * ```
  */
 export class HttpException extends Error {
-
   /**
    * HTTP status code
    */
@@ -88,7 +87,6 @@ export class HttpException extends Error {
       headers,
     });
   }
-
 }
 
 /**
@@ -101,7 +99,6 @@ export class HttpException extends Error {
  * @internal
  */
 export class MiddlewareResponseError extends Error {
-
   /**
    * The Response object returned by the middleware
    */
@@ -117,5 +114,4 @@ export class MiddlewareResponseError extends Error {
     this.name = 'MiddlewareResponseError';
     this.response = response;
   }
-
 }

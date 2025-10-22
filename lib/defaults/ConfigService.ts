@@ -30,7 +30,6 @@ import type { Context } from '../ErgenecoreContextWrapper';
  * Use this to define global error handlers and other server configuration.
  */
 export abstract class ConfigService implements AsenaConfig<Context> {
-
   /**
    * Global error handler
    *
@@ -39,5 +38,4 @@ export abstract class ConfigService implements AsenaConfig<Context> {
    * @returns Response or Promise<Response>
    */
   public abstract onError(error: Error, context: Context): Response | Promise<Response>;
-
 }

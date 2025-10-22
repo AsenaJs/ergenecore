@@ -89,7 +89,7 @@ describe('Global Middleware Pattern-Based Filtering', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const apiResponse = await fetch(`${baseUrl}/api/users`);
@@ -153,7 +153,7 @@ describe('Global Middleware Pattern-Based Filtering', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const apiResponse = await fetch(`${baseUrl}/api/users`);
@@ -205,7 +205,7 @@ describe('Global Middleware Pattern-Based Filtering', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const usersResponse = await fetch(`${baseUrl}/api/users`);
@@ -253,7 +253,7 @@ describe('Global Middleware Pattern-Based Filtering', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const apiResponse = await fetch(`${baseUrl}/api/users`);
@@ -314,7 +314,7 @@ describe('Global Middleware Pattern-Based Filtering', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const apiResponse = await fetch(`${baseUrl}/api/users`);
@@ -384,7 +384,7 @@ describe('Global Middleware Pattern-Based Filtering', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const apiResponse = await fetch(`${baseUrl}/api/users`);
@@ -440,7 +440,7 @@ describe('Global Middleware Pattern-Based Filtering', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const v1Response = await fetch(`${baseUrl}/api/v1/users`);
@@ -525,7 +525,7 @@ describe('Global Middleware Pattern-Based Filtering', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const apiUsersResponse = await fetch(`${baseUrl}/api/users`);
@@ -587,7 +587,7 @@ describe('Global Middleware Pattern-Based Filtering', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const apiResponse = await fetch(`${baseUrl}/api/users`);
@@ -637,7 +637,7 @@ describe('Global Middleware Pattern-Based Filtering', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const apiResponse = await fetch(`${baseUrl}/api/users`);

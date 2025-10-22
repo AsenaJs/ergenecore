@@ -16,7 +16,10 @@ const mockLogger: ServerLogger = {
 };
 
 // Helper to wait for specified milliseconds
-const sleep = (ms: number) => new Promise((resolve) => {setTimeout(resolve, ms)});
+const sleep = (ms: number) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 
 describe('Rate Limiter Middleware', () => {
   let adapter: Ergenecore;
@@ -55,7 +58,7 @@ describe('Rate Limiter Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       // First request should succeed
@@ -88,7 +91,7 @@ describe('Rate Limiter Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const ip = '1.2.3.4';
@@ -135,7 +138,7 @@ describe('Rate Limiter Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const ip = '1.2.3.4';
@@ -179,7 +182,7 @@ describe('Rate Limiter Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const ip = '1.2.3.4';
@@ -241,7 +244,7 @@ describe('Rate Limiter Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const ip = '1.2.3.4';
@@ -290,7 +293,7 @@ describe('Rate Limiter Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const ip1 = '1.1.1.1';
@@ -332,7 +335,7 @@ describe('Rate Limiter Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const apiKey = 'my-api-key-123';
@@ -374,7 +377,7 @@ describe('Rate Limiter Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const ip = '1.2.3.4';
@@ -408,7 +411,7 @@ describe('Rate Limiter Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const ip = '1.2.3.4';
@@ -448,7 +451,7 @@ describe('Rate Limiter Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const ip = '1.2.3.4';
@@ -490,7 +493,7 @@ describe('Rate Limiter Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const ip = '1.2.3.4';
@@ -530,7 +533,7 @@ describe('Rate Limiter Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`, {
@@ -561,7 +564,7 @@ describe('Rate Limiter Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const ip = '1.2.3.4';
@@ -598,7 +601,7 @@ describe('Rate Limiter Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const ip = '1.2.3.4';
@@ -638,7 +641,7 @@ describe('Rate Limiter Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       // Requests without IP header (grouped as 'unknown')
@@ -669,14 +672,14 @@ describe('Rate Limiter Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const ip = '1.2.3.4';
 
       // Fire 10 concurrent requests
       const promises = Array.from({ length: 10 }, () =>
-        fetch(`${baseUrl}/test`, { headers: { 'X-Forwarded-For': ip } })
+        fetch(`${baseUrl}/test`, { headers: { 'X-Forwarded-For': ip } }),
       );
 
       const responses = await Promise.all(promises);
