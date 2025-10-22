@@ -187,7 +187,8 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
   }
 
   /**
-   * Starts WebSocket server and initializes AsenaWebSocketServer for each namespace
+   * Starts WebSocket server and initializes a single shared AsenaWebSocketServer
+   * All WebSocket services share the same wrapper instance for efficiency
    * @param server - Bun Server instance
    */
   public startWebsocket(server: Server<any>): void {
@@ -195,8 +196,12 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
       return;
     }
 
-    for (const [namespace, websocket] of this.websockets) {
-      websocket.server = new AsenaWebSocketServer(server, namespace);
+    // Create a single shared wrapper for all WebSocket services
+    const sharedServer = new AsenaWebSocketServer(server);
+
+    // Assign the shared wrapper to all services
+    for (const websocket of this.websockets.values()) {
+      websocket.server = sharedServer;
     }
   }
 
