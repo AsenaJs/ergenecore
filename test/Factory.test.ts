@@ -91,7 +91,7 @@ describe('Factory Functions', () => {
           handler: async (ctx: Context) => ctx.send({ success: true }),
         });
 
-        adapter.start();
+        await adapter.start();
 
         expect(adapter['server'].port).toBeGreaterThan(0);
       });
@@ -129,7 +129,7 @@ describe('Factory Functions', () => {
           handler: async (ctx: Context) => ctx.send({ success: true }),
         });
 
-        adapter.start();
+        await adapter.start();
 
         expect(adapter['server'].hostname).toBe('localhost');
       });
@@ -159,7 +159,7 @@ describe('Factory Functions', () => {
           handler: async (ctx: Context) => ctx.send({ success: true }),
         });
 
-        adapter.start();
+        await adapter.start();
 
         // Logger should have been called for server start
         expect(customLogger.info).toHaveBeenCalled();
@@ -264,7 +264,7 @@ describe('Factory Functions', () => {
           handler: async (ctx: Context) => ctx.send({ status: 'ok' }),
         });
 
-        adapter.start();
+        await adapter.start();
 
         const response = await fetch(`http://localhost:${adapter['server'].port}/health`);
         const data = await response.json();
@@ -288,7 +288,7 @@ describe('Factory Functions', () => {
           handler: async (ctx: Context) => ctx.send({ hostname: 'localhost' }),
         });
 
-        adapter.start();
+        await adapter.start();
 
         const response = await fetch(`http://localhost:${adapter['server'].port}/test`);
         const data = await response.json();
@@ -374,7 +374,7 @@ describe('Factory Functions', () => {
           handler: async (ctx: Context) => ctx.send({ env: 'production' }),
         });
 
-        adapter.start();
+        await adapter.start();
 
         const response = await fetch(`http://localhost:${adapter['server'].port}/api/status`);
         const data = await response.json();
@@ -402,7 +402,7 @@ describe('Factory Functions', () => {
           handler: async (ctx: Context) => ctx.send({ ready: true }),
         });
 
-        adapter.start();
+        await adapter.start();
 
         const response = await fetch(`http://localhost:${adapter['server'].port}/ready`);
         const data = await response.json();
@@ -495,7 +495,7 @@ describe('Factory Functions', () => {
           handler: async (ctx: Context) => ctx.send({ env: 'development' }),
         });
 
-        adapter.start();
+        await adapter.start();
 
         const response = await fetch(`http://localhost:${adapter['server'].port}/dev/test`);
         const data = await response.json();
@@ -521,7 +521,7 @@ describe('Factory Functions', () => {
           handler: async (ctx: Context) => ctx.send({ success: true }),
         });
 
-        adapter.start();
+        await adapter.start();
 
         const response = await fetch(`http://localhost:${adapter['server'].port}/test`);
 
@@ -545,7 +545,7 @@ describe('Factory Functions', () => {
           handler: async (ctx: Context) => ctx.send({ ws: 'enabled' }),
         });
 
-        adapter.start();
+        await adapter.start();
 
         const response = await fetch(`http://localhost:${adapter['server'].port}/test`);
         const data = await response.json();
@@ -667,8 +667,8 @@ describe('Factory Functions', () => {
         handler: async (ctx: Context) => ctx.send({ id: 2 }),
       });
 
-      adapter1.start();
-      adapter2.start();
+      await adapter1.start();
+      await adapter2.start();
 
       const response1 = await fetch(`http://localhost:${adapter1['server'].port}/test1`);
       const data1 = await response1.json();

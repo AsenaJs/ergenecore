@@ -48,7 +48,7 @@ describe('CoreAdapter Integration Tests', () => {
       });
 
       // Start server
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       // Make request
@@ -73,7 +73,7 @@ describe('CoreAdapter Integration Tests', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/users`, {
@@ -104,7 +104,7 @@ describe('CoreAdapter Integration Tests', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/users/123`, {
@@ -135,7 +135,7 @@ describe('CoreAdapter Integration Tests', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/users/456`, {
@@ -165,7 +165,7 @@ describe('CoreAdapter Integration Tests', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/users/789`);
@@ -189,7 +189,7 @@ describe('CoreAdapter Integration Tests', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/orgs/asenajs/repos/ergenecore`);
@@ -213,7 +213,7 @@ describe('CoreAdapter Integration Tests', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/items/hello-world-123`);
@@ -239,7 +239,7 @@ describe('CoreAdapter Integration Tests', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/search?q=test&page=2`);
@@ -263,7 +263,7 @@ describe('CoreAdapter Integration Tests', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/json`);
@@ -285,7 +285,7 @@ describe('CoreAdapter Integration Tests', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/html`);
@@ -307,7 +307,7 @@ describe('CoreAdapter Integration Tests', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/old`, {
@@ -330,7 +330,7 @@ describe('CoreAdapter Integration Tests', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/created`);
@@ -363,7 +363,7 @@ describe('CoreAdapter Integration Tests', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const getResponse = await fetch(`${baseUrl}/items`);
@@ -399,7 +399,7 @@ describe('CoreAdapter Integration Tests', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const usersResponse = await fetch(`${baseUrl}/users`);
@@ -415,7 +415,7 @@ describe('CoreAdapter Integration Tests', () => {
 
   describe('Error Handling', () => {
     it('should return 404 for unregistered routes', async () => {
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/not-found`);
@@ -437,7 +437,7 @@ describe('CoreAdapter Integration Tests', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/error`);
@@ -463,7 +463,7 @@ describe('CoreAdapter Integration Tests', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/custom-error`);
@@ -489,7 +489,7 @@ describe('CoreAdapter Integration Tests', () => {
       });
 
       // Start server
-      server = adapter.start();
+      server = await adapter.start();
       const port = server.port;
 
       baseUrl = `http://localhost:${port}`;
@@ -548,7 +548,7 @@ describe('CoreAdapter Integration Tests', () => {
       });
 
       // Start server
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://${adapter.hostname || 'localhost'}:${server.port}`;
 
       // Set cookie
@@ -597,7 +597,7 @@ describe('CoreAdapter Integration Tests', () => {
       });
 
       // Start server
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://${adapter.hostname || 'localhost'}:${server.port}`;
 
       // Delete cookie

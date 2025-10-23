@@ -21,13 +21,20 @@
     "prepublishOnly": "bun run build",
     "benchmark": "bun run benchmark/run-benchmark.ts",
     "benchmark:native": "bun run benchmark/native-bun.ts",
-    "benchmark:ergenecore": "bun run benchmark/ergenecore.ts"
+    "benchmark:ergenecore": "bun run benchmark/ergenecore.ts",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "bun run lint && bun run format:check",
+    "check:fix": "bun run lint:fix && bun run format"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.7",
     "@types/bun": "latest",
-    "@typescript-eslint/eslint-plugin": "^6.21.0",
-    "eslint": "^8.57.1",
+    "@typescript-eslint/eslint-plugin": "^8.46.2",
+    "@typescript-eslint/parser": "^8.46.2",
+    "eslint": "^9.38.0",
     "eslint-config-alloy": "^5.1.2",
     "eslint-config-prettier": "^9.1.2",
     "eslint-plugin-alloy": "^1.2.1",
@@ -35,7 +42,8 @@
     "eslint-plugin-n": "^16.6.2",
     "eslint-plugin-prettier": "^5.5.4",
     "eslint-plugin-promise": "^6.6.0",
-    "prettier": "^3.6.2"
+    "prettier": "^3.6.2",
+    "typescript-eslint": "^8.46.2"
   },
   "peerDependencies": {
     "@asenajs/asena": "^0.5.0",

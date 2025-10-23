@@ -227,7 +227,6 @@ export interface RateLimiterOptions {
  * ```
  */
 export class RateLimiterMiddleware extends MiddlewareService {
-
   /**
    * Instance-specific bucket storage
    * Key: Client identifier (IP, user ID, etc.)
@@ -339,7 +338,7 @@ export class RateLimiterMiddleware extends MiddlewareService {
    */
   public async handle(context: Context, next: () => Promise<void>): Promise<any> {
     // Check skip predicate
-    if (this.skip && this.skip(context)) {
+    if (this.skip?.(context)) {
       return await next();
     }
 
@@ -431,9 +430,9 @@ export class RateLimiterMiddleware extends MiddlewareService {
    * @param context - Ergenecore context
    * @returns Client identifier
    */
-  private defaultKeyGenerator(context: Context): string {
+  private defaultKeyGenerator = (context: Context): string => {
     return context.req.headers.get('x-forwarded-for') || context.req.headers.get('cf-connecting-ip') || 'unknown';
-  }
+  };
 
   /**
    * Setup automatic cleanup of inactive buckets
@@ -463,5 +462,4 @@ export class RateLimiterMiddleware extends MiddlewareService {
     // Unref timer to allow process to exit
     this.cleanupTimer.unref();
   }
-
 }
