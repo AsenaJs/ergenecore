@@ -34,8 +34,10 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .DS_Store
 
 # Benchmark results (local-specific)
-benchmark/results.json
+/benchmark
 
 Claude
 /CLAUDE.md
 /.claude/
+
+junit.xml
