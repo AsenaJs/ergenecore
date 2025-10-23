@@ -13,7 +13,6 @@ export type Context = ErgenecoreContextWrapper;
  * allowing Asena to work with different adapters without changing user code.
  */
 export class ErgenecoreContextWrapper implements AsenaContext<Request, Response> {
-
   private readonly request: Request;
 
   private _url?: URL;
@@ -466,5 +465,4 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
 
     return isValid ? value : false;
   }
-
 }

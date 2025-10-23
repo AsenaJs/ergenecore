@@ -2,6 +2,19 @@
 
 **Blazing-fast** native Bun adapter for [Asena.js](https://github.com/asenajs/asena) - Built exclusively with Bun's native APIs for maximum performance.
 
+Built on Bun runtime for exceptional performance:
+
+| Framework                | Requests/sec          | Latency (avg) |
+|--------------------------|-----------------------|---------------|
+| **Asena + Ergenecore**   | **294962.61**         | **1.34ms**    |
+| Hono                     | 266476.83             | 1.49ms        |
+| **Asena + Hono-adapter** | **233182.35**         | **1.70ms**    |
+| NestJS (Bun)             | 100975.20             | 3.92ms        |
+| NestJS (Node)            | 88083.22              | 5.33ms        |
+
+> Benchmark: 12 threads, 400 connections, 120s duration, Hello World endpoint
+
+
 ## Features
 
 - ⚡ **Zero Dependencies** - Pure Bun native APIs (except Zod for validation)

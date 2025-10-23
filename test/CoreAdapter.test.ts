@@ -110,15 +110,15 @@ describe('CoreAdapter', () => {
       (mockLogger.info as any).mockClear();
 
       adapter.setPort(0); // Use random port
-      adapter.start();
+      await adapter.start();
 
       // Should log server ready and controller-based routes
       expect(mockLogger.info).toHaveBeenCalled();
 
       // Check if controller-based log format was used
       const logCalls = (mockLogger.info as any).mock.calls;
-      const routeLog = logCalls.find((call: any) =>
-        call[0]?.includes?.('TestController') || call[0]?.includes?.('Registered routes')
+      const routeLog = logCalls.find(
+        (call: any) => call[0]?.includes?.('TestController') || call[0]?.includes?.('Registered routes'),
       );
 
       expect(routeLog).toBeDefined();
@@ -262,7 +262,7 @@ describe('CoreAdapter', () => {
       });
 
       adapter.setPort(0); // Use random available port
-      const server = adapter.start();
+      const server = await await adapter.start();
 
       expect(server).toBeDefined();
       expect(adapter['server']).toBe(server);
@@ -285,7 +285,7 @@ describe('CoreAdapter', () => {
 
       expect(adapter['routesBuilt']).toBe(false);
 
-      adapter.start();
+      await adapter.start();
 
       expect(adapter['routesBuilt']).toBe(true);
 
@@ -308,7 +308,7 @@ describe('CoreAdapter', () => {
 
       adapter['buildBunRoutes'] = buildSpy;
 
-      adapter.start();
+      await adapter.start();
       expect(buildSpy).toHaveBeenCalledTimes(1);
 
       await adapter.stop();
@@ -326,7 +326,7 @@ describe('CoreAdapter', () => {
         handler,
       });
 
-      adapter.start();
+      await adapter.start();
       const port = adapter['server'].port;
 
       await adapter.stop();
@@ -359,7 +359,7 @@ describe('CoreAdapter', () => {
       });
 
       adapter.setPort(0); // Use random available port
-      adapter.start();
+      await adapter.start();
 
       const response = await fetch(`http://localhost:${adapter['server'].port}/test`);
 
@@ -385,7 +385,7 @@ describe('CoreAdapter', () => {
       });
 
       adapter.setPort(0); // Use random available port
-      adapter.start();
+      await adapter.start();
 
       const response = await fetch(`http://localhost:${adapter['server'].port}/users/123`);
       const data = await response.json();
@@ -412,7 +412,7 @@ describe('CoreAdapter', () => {
       });
 
       adapter.setPort(0); // Use random available port
-      adapter.start();
+      await adapter.start();
 
       const response = await fetch(`http://localhost:${adapter['server'].port}/error`);
 
@@ -423,7 +423,7 @@ describe('CoreAdapter', () => {
     });
 
     it('should handle 404 for unregistered routes', async () => {
-      adapter.start();
+      await adapter.start();
 
       const response = await fetch(`http://localhost:${adapter['server'].port}/notfound`);
 

@@ -60,31 +60,31 @@ describe('CoreWebsocketAdapter - Integration Tests', () => {
     };
 
     // Register WebSocket routes using new architecture
-    adapter.registerWebsocketRoute({
+    await adapter.registerWebsocketRoute({
       path: 'chat',
       middlewares: [],
       websocketService: chatService as AsenaWebSocketService<any>,
     });
 
-    adapter.registerWebsocketRoute({
+    await adapter.registerWebsocketRoute({
       path: 'echo',
       middlewares: [],
       websocketService: echoService as AsenaWebSocketService<any>,
     });
 
-    adapter.registerWebsocketRoute({
+    await adapter.registerWebsocketRoute({
       path: 'closable',
       middlewares: [],
       websocketService: closableService as AsenaWebSocketService<any>,
     });
 
-    adapter.registerWebsocketRoute({
+    await adapter.registerWebsocketRoute({
       path: 'multi',
       middlewares: [],
       websocketService: multiService as AsenaWebSocketService<any>,
     });
 
-    adapter.registerWebsocketRoute({
+    await adapter.registerWebsocketRoute({
       path: 'limited',
       middlewares: [],
       websocketService: limitedService as AsenaWebSocketService<any>,

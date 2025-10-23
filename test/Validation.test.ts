@@ -61,7 +61,7 @@ describe('Validation System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       // Valid request
@@ -105,7 +105,7 @@ describe('Validation System', () => {
         },
       } as any);
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       // Invalid email
@@ -151,7 +151,7 @@ describe('Validation System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/posts?page=2&limit=20`);
@@ -191,7 +191,7 @@ describe('Validation System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       // Query too short
@@ -230,7 +230,7 @@ describe('Validation System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const validUuid = '123e4567-e89b-12d3-a456-426614174000';
@@ -270,7 +270,7 @@ describe('Validation System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       // Invalid ID (not numeric)
@@ -308,7 +308,7 @@ describe('Validation System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/api/data`, {
@@ -352,7 +352,7 @@ describe('Validation System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       // Missing Bearer prefix
@@ -404,7 +404,7 @@ describe('Validation System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/articles?publish=true`, {
@@ -458,7 +458,7 @@ describe('Validation System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/users/123/profile`, {
@@ -505,7 +505,7 @@ describe('Validation System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/verify-age`, {
@@ -547,7 +547,7 @@ describe('Validation System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
       console.log('registered');
 
@@ -590,7 +590,7 @@ describe('Validation System', () => {
         },
       } as any);
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       // Valid request
@@ -629,7 +629,7 @@ describe('Validation System', () => {
         },
       } as any);
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       // Invalid data (age < 18, country not 2 chars)
@@ -671,7 +671,7 @@ describe('Validation System', () => {
         },
       } as any);
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/items-plain?sort=asc&limit=10`);
@@ -722,7 +722,7 @@ describe('Validation System', () => {
         },
       } as any);
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       // Valid request

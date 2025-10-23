@@ -71,7 +71,7 @@ describe('Middleware System', () => {
         },
       } as any);
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`);
@@ -99,7 +99,7 @@ describe('Middleware System', () => {
         },
       } as any);
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`);
@@ -128,7 +128,7 @@ describe('Middleware System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`);
@@ -157,7 +157,7 @@ describe('Middleware System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`);
@@ -188,7 +188,7 @@ describe('Middleware System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`);
@@ -217,7 +217,7 @@ describe('Middleware System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`);
@@ -251,7 +251,7 @@ describe('Middleware System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`);
@@ -289,7 +289,7 @@ describe('Middleware System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`);
@@ -325,7 +325,7 @@ describe('Middleware System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`);
@@ -357,7 +357,7 @@ describe('Middleware System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`);
@@ -401,7 +401,7 @@ describe('Middleware System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response1 = await fetch(`${baseUrl}/route1`);
@@ -444,7 +444,7 @@ describe('Middleware System', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response1 = await fetch(`${baseUrl}/route1`);

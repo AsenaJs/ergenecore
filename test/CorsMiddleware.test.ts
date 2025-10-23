@@ -49,7 +49,7 @@ describe('CORS Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`, {
@@ -77,7 +77,7 @@ describe('CORS Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`);
@@ -115,7 +115,7 @@ describe('CORS Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`, {
@@ -152,7 +152,7 @@ describe('CORS Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`, {
@@ -182,7 +182,7 @@ describe('CORS Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`, {
@@ -214,7 +214,7 @@ describe('CORS Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       // Should allow subdomain
@@ -266,7 +266,7 @@ describe('CORS Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`, {
@@ -296,7 +296,7 @@ describe('CORS Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`, {
@@ -341,7 +341,7 @@ describe('CORS Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`, {
@@ -385,7 +385,7 @@ describe('CORS Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`, {
@@ -418,7 +418,7 @@ describe('CORS Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`, {
@@ -463,7 +463,7 @@ describe('CORS Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`, {
@@ -496,7 +496,7 @@ describe('CORS Middleware', () => {
         },
       });
 
-      server = adapter.start();
+      server = await adapter.start();
       baseUrl = `http://localhost:${server.port}`;
 
       const response = await fetch(`${baseUrl}/test`, {

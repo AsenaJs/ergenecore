@@ -65,7 +65,7 @@ describe('Error Handling', () => {
         },
       });
 
-      adapter.start();
+      await adapter.start();
 
       const response = await fetch(`http://localhost:${adapter['server'].port}/error`);
       const data = await response.json();
@@ -107,7 +107,7 @@ describe('Error Handling', () => {
         },
       });
 
-      adapter.start();
+      await adapter.start();
 
       await fetch(`http://localhost:${adapter['server'].port}/test/123?foo=bar`);
 
@@ -128,7 +128,7 @@ describe('Error Handling', () => {
         },
       });
 
-      adapter.start();
+      await adapter.start();
 
       const response = await fetch(`http://localhost:${adapter['server'].port}/error`);
       const data = await response.json();
@@ -158,7 +158,7 @@ describe('Error Handling', () => {
         },
       });
 
-      adapter.start();
+      await adapter.start();
 
       const response = await fetch(`http://localhost:${adapter['server'].port}/submit`, {
         method: 'POST',
@@ -193,7 +193,7 @@ describe('Error Handling', () => {
         handler: async (ctx: Context) => ctx.send({ success: true }),
       });
 
-      adapter.start();
+      await adapter.start();
 
       const response = await fetch(`http://localhost:${adapter['server'].port}/middleware-error`);
       const data = await response.json();
@@ -231,7 +231,7 @@ describe('Error Handling', () => {
         handler: async (ctx: Context) => ctx.send({ success: true }),
       });
 
-      adapter.start();
+      await adapter.start();
 
       const response = await fetch(`http://localhost:${adapter['server'].port}/test`);
       const data = await response.json();
@@ -258,12 +258,14 @@ describe('Error Handling', () => {
         path: '/async-error',
         middlewares: [],
         handler: async (_ctx: Context) => {
-          await new Promise((resolve) => {setTimeout(resolve, 10)});
+          await new Promise((resolve) => {
+            setTimeout(resolve, 10);
+          });
           throw new Error('Async operation failed');
         },
       });
 
-      adapter.start();
+      await adapter.start();
 
       const response = await fetch(`http://localhost:${adapter['server'].port}/async-error`);
       const data = await response.json();
@@ -302,7 +304,7 @@ describe('Error Handling', () => {
         },
       });
 
-      adapter.start();
+      await adapter.start();
 
       await fetch(`http://localhost:${adapter['server'].port}/error-with-body`, {
         method: 'POST',
@@ -335,7 +337,7 @@ describe('Error Handling', () => {
         },
       });
 
-      adapter.start();
+      await adapter.start();
 
       const response = await fetch(`http://localhost:${adapter['server'].port}/throw-string`);
 
@@ -359,7 +361,7 @@ describe('Error Handling', () => {
         },
       });
 
-      adapter.start();
+      await adapter.start();
 
       await fetch(`http://localhost:${adapter['server'].port}/error`);
 
@@ -389,7 +391,7 @@ describe('Error Handling', () => {
         },
       });
 
-      adapter.start();
+      await adapter.start();
 
       await fetch(`http://localhost:${adapter['server'].port}/handled-error`);
 

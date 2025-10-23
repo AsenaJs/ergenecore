@@ -16,7 +16,6 @@ import {
  * Uses Bun's native WebSocket API with namespace-based routing
  */
 export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
-
   public name = 'ErgenecoreWebsocketAdapter';
 
   private activeConnections: Map<string, Set<string>> = new Map(); // namespace -> Set of connection IDs
@@ -121,7 +120,7 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
     const heartbeatInterval = options?.heartbeatInterval;
 
     this.websocket = {
-      open: (ws: ServerWebSocket<WebSocketData>) => {
+      open: async (ws: ServerWebSocket<WebSocketData>) => {
         // Normalize to namespace format (remove leading /)
         const namespace = ws.data.path.replace(/^\//, '');
 
@@ -144,7 +143,7 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
           this.activeConnections.set(namespace, new Set());
         }
 
-        this.activeConnections.get(namespace)!.add(ws.data.id);
+        this.activeConnections.get(namespace).add(ws.data.id);
 
         // Start heartbeat if enabled
         if (heartbeatInterval) {
@@ -156,10 +155,10 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
         );
 
         // Call user handler
-        this.createHandler('onOpenInternal')(ws);
+        await this.createHandler('onOpenInternal')(ws);
       },
 
-      close: (ws: ServerWebSocket<WebSocketData>, code: number, reason: string) => {
+      close: async (ws: ServerWebSocket<WebSocketData>, code: number, reason: string) => {
         // Normalize to namespace format (remove leading /)
         const namespace = ws.data.path.replace(/^\//, '');
 
@@ -176,7 +175,7 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
         );
 
         // Call user handler
-        this.createHandler('onCloseInternal')(ws, code, reason);
+        await this.createHandler('onCloseInternal')(ws, code, reason);
       },
 
       message: this.createHandler('onMessage'),
@@ -188,7 +187,8 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
   }
 
   /**
-   * Starts WebSocket server and initializes AsenaWebSocketServer for each namespace
+   * Starts WebSocket server and initializes a single shared AsenaWebSocketServer
+   * All WebSocket services share the same wrapper instance for efficiency
    * @param server - Bun Server instance
    */
   public startWebsocket(server: Server<any>): void {
@@ -196,8 +196,12 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
       return;
     }
 
-    for (const [namespace, websocket] of this.websockets) {
-      websocket.server = new AsenaWebSocketServer(server, namespace);
+    // Create a single shared wrapper for all WebSocket services
+    const sharedServer = new AsenaWebSocketServer(server);
+
+    // Assign the shared wrapper to all services
+    for (const websocket of this.websockets.values()) {
+      websocket.server = sharedServer;
     }
   }
 
@@ -305,5 +309,4 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
       }
     };
   }
-
 }
