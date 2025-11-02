@@ -9,7 +9,7 @@
     "README.md",
     "LICENSE"
   ],
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "LibirSoft",
   "license": "MIT",
   "scripts": {
@@ -30,11 +30,12 @@
     "check:fix": "bun run lint:fix && bun run format"
   },
   "devDependencies": {
+    "@asenajs/asena": "latest",
     "@changesets/cli": "^2.29.7",
     "@types/bun": "latest",
     "@typescript-eslint/eslint-plugin": "^8.46.2",
     "@typescript-eslint/parser": "^8.46.2",
-    "eslint": "^9.38.0",
+    "eslint": "^9.39.0",
     "eslint-config-alloy": "^5.1.2",
     "eslint-config-prettier": "^9.1.2",
     "eslint-plugin-alloy": "^1.2.1",
@@ -46,7 +47,7 @@
     "typescript-eslint": "^8.46.2"
   },
   "peerDependencies": {
-    "@asenajs/asena": "^0.5.0",
+    "@asenajs/asena": "^0.6.0",
     "typescript": "^5.8.2"
   },
   "dependencies": {
