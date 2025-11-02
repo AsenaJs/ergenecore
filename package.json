@@ -9,7 +9,7 @@
     "README.md",
     "LICENSE"
   ],
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "LibirSoft",
   "license": "MIT",
   "scripts": {
@@ -30,7 +30,7 @@
     "check:fix": "bun run lint:fix && bun run format"
   },
   "devDependencies": {
-    "@asenajs/asena": "0.6.0-beta.0",
+    "@asenajs/asena": "latest",
     "@changesets/cli": "^2.29.7",
     "@types/bun": "latest",
     "@typescript-eslint/eslint-plugin": "^8.46.2",
