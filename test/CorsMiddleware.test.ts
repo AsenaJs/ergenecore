@@ -17,7 +17,7 @@ const mockLogger: ServerLogger = {
 
 describe('CORS Middleware', () => {
   let adapter: Ergenecore;
-  let server: Server;
+  let server: Server<any>;
   let baseUrl: string;
 
   beforeEach(() => {
