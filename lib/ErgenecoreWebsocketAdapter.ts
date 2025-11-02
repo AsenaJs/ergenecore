@@ -274,7 +274,7 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
 
       try {
         await (handler as (socket: AsenaSocket<WebSocketData>, ...args: any[]) => void | Promise<void>)(
-          new AsenaSocket(ws, websocket),
+          new AsenaSocket(ws, websocket.namespace),
           ...args,
         );
       } catch (error) {

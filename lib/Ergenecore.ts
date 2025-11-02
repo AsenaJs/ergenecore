@@ -12,7 +12,7 @@ import {
 } from '@asenajs/asena/adapter';
 import { blue, green, red, type ServerLogger, yellow } from '@asenajs/asena/logger';
 import type { GlobalMiddlewareConfig } from '@asenajs/asena/server/config';
-import { shouldApplyMiddleware } from '@asenajs/asena/utils/patternMatcher';
+import { shouldApplyMiddleware } from '@asenajs/asena/utlis';
 import { ErgenecoreWebsocketAdapter } from './ErgenecoreWebsocketAdapter';
 import { type Context, ErgenecoreContextWrapper } from './ErgenecoreContextWrapper';
 import type { Server } from 'bun';
@@ -881,7 +881,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         // Handle other errors with custom error handler if available
         if (this.errorHandler) {
           // Pass the original context with params already injected
-          return await this.errorHandler(error as Error, context);
+          return this.errorHandler(error as Error, context);
         }
 
         // Default error response
