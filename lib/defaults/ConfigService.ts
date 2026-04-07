@@ -8,7 +8,7 @@
  *
  * @example
  * ```typescript
- * import { Config } from '@asenajs/asena/server';
+ * import { Config } from '@asenajs/asena/decorators';
  * import { ConfigService, type Context } from '@asenajs/ergenecore';
  *
  * @Config()
@@ -20,8 +20,9 @@
  * ```
  */
 
-import type { AsenaConfig } from '@asenajs/asena/server/config';
+import type { AsenaConfig, GlobalMiddlewareEntry } from '@asenajs/asena/server/config';
 import type { Context } from '../ErgenecoreContextWrapper';
+import type { AsenaServeOptions } from '@asenajs/asena/adapter';
 
 /**
  * Base class for Ergenecore configuration services
@@ -38,4 +39,8 @@ export abstract class ConfigService implements AsenaConfig<Context> {
    * @returns Response or Promise<Response>
    */
   public abstract onError(error: Error, context: Context): Response | Promise<Response>;
+
+  public abstract globalMiddlewares(): Promise<GlobalMiddlewareEntry[]> | GlobalMiddlewareEntry[] ;
+
+  public abstract  serveOptions(): AsenaServeOptions ;
 }

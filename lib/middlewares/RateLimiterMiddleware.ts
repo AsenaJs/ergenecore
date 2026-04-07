@@ -12,7 +12,7 @@
  *
  * **Usage in Asena Application:**
  * ```typescript
- * import { Middleware } from '@asenajs/asena/server';
+ * import { Middleware } from '@asenajs/asena/decorators';
  * import { RateLimiterMiddleware } from '@asenajs/ergenecore';
  *
  * // Create custom rate limiter for your needs
@@ -431,7 +431,12 @@ export class RateLimiterMiddleware extends MiddlewareService {
    * @returns Client identifier
    */
   private defaultKeyGenerator = (context: Context): string => {
-    return context.req.headers.get('x-forwarded-for') || context.req.headers.get('cf-connecting-ip') || 'unknown';
+    return (
+      context.req.headers.get('x-forwarded-for') ||
+      context.req.headers.get('cf-connecting-ip') ||
+      context.getRequestIp?.() ||
+      'unknown'
+    );
   };
 
   /**

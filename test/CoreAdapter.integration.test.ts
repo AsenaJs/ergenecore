@@ -121,6 +121,52 @@ describe('CoreAdapter Integration Tests', () => {
       expect(data.data.name).toBe('Jane Doe');
     });
 
+    it('should handle ALL method request for multiple HTTP methods', async () => {
+      adapter.registerRoute({
+        staticServe: undefined,
+        validator: undefined,
+        method: HttpMethod.ALL,
+        path: '/catch-all',
+        middlewares: [],
+        handler: async (ctx: Context) => {
+          return ctx.send({ method: ctx.request.method });
+        },
+      });
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const getRes = await fetch(`${baseUrl}/catch-all`);
+      const getData = await getRes.json();
+
+      expect(getRes.status).toBe(200);
+      expect(getData.method).toBe('GET');
+
+      const postRes = await fetch(`${baseUrl}/catch-all`, { method: 'POST' });
+      const postData = await postRes.json();
+
+      expect(postRes.status).toBe(200);
+      expect(postData.method).toBe('POST');
+
+      const putRes = await fetch(`${baseUrl}/catch-all`, { method: 'PUT' });
+      const putData = await putRes.json();
+
+      expect(putRes.status).toBe(200);
+      expect(putData.method).toBe('PUT');
+
+      const deleteRes = await fetch(`${baseUrl}/catch-all`, { method: 'DELETE' });
+      const deleteData = await deleteRes.json();
+
+      expect(deleteRes.status).toBe(200);
+      expect(deleteData.method).toBe('DELETE');
+
+      const patchRes = await fetch(`${baseUrl}/catch-all`, { method: 'PATCH' });
+      const patchData = await patchRes.json();
+
+      expect(patchRes.status).toBe(200);
+      expect(patchData.method).toBe('PATCH');
+    });
+
     it('should handle DELETE request', async () => {
       adapter.registerRoute({
         staticServe: undefined,

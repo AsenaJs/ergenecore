@@ -1,3 +1,13 @@
+import type { HttpStatusCode } from '@asenajs/asena/web-types';
+
+/**
+ * Extended ResponseInit with cause support
+ */
+export interface HttpExceptionInit extends ResponseInit {
+  /** The original error that caused this exception */
+  cause?: Error;
+}
+
 /**
  * HTTP Exception for Ergenecore
  *
@@ -17,6 +27,11 @@
  * if (!isValid) {
  *   throw new HttpException(400, { error: 'Invalid data' });
  * }
+ *
+ * // With cause
+ * try { await db.query(...) } catch (err) {
+ *   throw new HttpException(500, 'Database Error', { cause: err });
+ * }
  * ```
  */
 export class HttpException extends Error {
@@ -31,21 +46,24 @@ export class HttpException extends Error {
   public readonly body: string | object;
 
   /**
-   * Optional response init options (headers, statusText, etc.)
+   * Optional response init options (headers, statusText, cause, etc.)
    */
-  public readonly options?: ResponseInit;
+  public readonly options?: HttpExceptionInit;
 
   /**
    * Creates a new HttpException
    *
-   * @param status - HTTP status code (e.g., 401, 403, 404)
+   * @param status - HTTP status code (e.g., 401, 403, 404) or HttpStatusCode enum value
    * @param body - Response body (string or object to be JSON stringified)
-   * @param options - Optional ResponseInit options (headers, statusText, etc.)
+   * @param options - Optional HttpExceptionInit options (headers, statusText, cause, etc.)
    *
    * @example
    * ```typescript
    * // Simple message
    * throw new HttpException(404, 'Not Found');
+   *
+   * // With HttpStatusCode enum
+   * throw new HttpException(ClientErrorStatusCode.NotFound, 'Not Found');
    *
    * // JSON object
    * throw new HttpException(400, { error: 'Invalid input', field: 'email' });
@@ -54,12 +72,15 @@ export class HttpException extends Error {
    * throw new HttpException(429, 'Too Many Requests', {
    *   headers: { 'Retry-After': '60' }
    * });
+   *
+   * // With cause
+   * throw new HttpException(500, 'Internal Error', { cause: originalError });
    * ```
    */
-  public constructor(status: number, body: string | object = '', options?: ResponseInit) {
+  public constructor(status: HttpStatusCode | number, body: string | object = '', options?: HttpExceptionInit) {
     const message = typeof body === 'string' ? body : JSON.stringify(body);
 
-    super(message);
+    super(message, options?.cause ? { cause: options.cause } : undefined);
     this.name = 'HttpException';
     this.status = status;
     this.body = body;

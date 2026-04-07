@@ -11,7 +11,7 @@
  *
  * @example
  * ```typescript
- * import { Middleware } from '@asenajs/asena/server';
+ * import { Middleware } from '@asenajs/asena/decorators';
  * import { CorsMiddleware } from '@asenajs/ergenecore';
  *
  * @Middleware()

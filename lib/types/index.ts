@@ -28,5 +28,8 @@ export * from './StaticServeExtras';
 // Validation types
 export * from './Validation';
 
+// Ping strategy type
+export * from './SendPingStrategy';
+
 // Re-export Context type for convenience
 export type { Context } from '../ErgenecoreContextWrapper';

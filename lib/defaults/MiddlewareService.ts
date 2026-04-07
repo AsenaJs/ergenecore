@@ -8,7 +8,7 @@
  *
  * @example
  * ```typescript
- * import { Middleware } from '@asenajs/asena/server';
+ * import { Middleware } from '@asenajs/asena/decorators';
  * import { MiddlewareService, type Context } from '@asenajs/ergenecore';
  *
  * @Middleware()

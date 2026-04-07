@@ -353,7 +353,7 @@ describe('CoreWebsocketAdapter - Namespace Registration', () => {
       }).not.toThrow();
     });
 
-    it('should initialize AsenaWebSocketServer for each registered namespace', () => {
+    it('should initialize AsenaWebSocketServer for each registered namespace', async () => {
       const mockService: Partial<AsenaWebSocketService<any>> = {
         namespace: 'chat',
       };
@@ -361,9 +361,9 @@ describe('CoreWebsocketAdapter - Namespace Registration', () => {
       // Use new API: registerWebSocketWithPath instead of deprecated registerWebSocket
       adapter.registerWebSocket(mockService as AsenaWebSocketService<any>);
 
-      const mockServer: any = { upgrade: mock(() => {}) };
+      const mockServer: any = { upgrade: mock(() => {}), publish: mock(() => {}) };
 
-      adapter.startWebsocket(mockServer);
+      await adapter.startWebsocket(mockServer);
 
       // After startWebsocket, each service should have a server property set
       expect(mockService.server).toBeDefined();
