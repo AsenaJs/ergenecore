@@ -27,8 +27,12 @@ export { Ergenecore } from './Ergenecore';
 export { ErgenecoreContextWrapper } from './ErgenecoreContextWrapper';
 export { ErgenecoreWebsocketAdapter } from './ErgenecoreWebsocketAdapter';
 
+// Stream writers
+export { StreamWriter } from './stream/StreamWriter';
+export { SSEStreamWriter } from './stream/SSEStreamWriter';
+
 // Error classes
-export { HttpException } from './errors';
+export { HttpException, type HttpExceptionInit } from './errors';
 
 // Factory functions
 export {
@@ -43,6 +47,10 @@ export { ValidationService } from './defaults/ValidationService';
 export { ConfigService } from './defaults/ConfigService';
 export { MiddlewareService } from './defaults/MiddlewareService';
 export { StaticServeService } from './defaults/StaticServeService';
+
+// Built-in middlewares
+export { CorsMiddleware, type CorsOptions } from './middlewares/CorsMiddleware';
+export { RateLimiterMiddleware, type RateLimiterOptions } from './middlewares/RateLimiterMiddleware';
 
 // Types
 export type { Context } from './ErgenecoreContextWrapper';

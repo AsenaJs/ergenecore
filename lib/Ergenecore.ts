@@ -12,7 +12,6 @@ import {
 } from '@asenajs/asena/adapter';
 import { blue, green, red, type ServerLogger, yellow } from '@asenajs/asena/logger';
 import type { GlobalMiddlewareConfig } from '@asenajs/asena/server/config';
-import { shouldApplyMiddleware } from '@asenajs/asena/utlis';
 import { ErgenecoreWebsocketAdapter } from './ErgenecoreWebsocketAdapter';
 import { type Context, ErgenecoreContextWrapper } from './ErgenecoreContextWrapper';
 import type { Server } from 'bun';
@@ -20,6 +19,7 @@ import * as Bun from 'bun';
 import * as path from 'path';
 import type { StaticServeExtras, ValidationSchema, ValidationSchemaWithHook } from './types';
 import { HttpException, MiddlewareResponseError } from './errors';
+import { shouldApplyMiddleware } from '@asenajs/asena/utils';
 
 /**
  * Static response headers for performance
@@ -91,6 +91,12 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     config?: GlobalMiddlewareConfig['routes'];
   }[] = [];
 
+  /**
+   * HTML routes for FrontendController pages
+   * Stored separately and merged into Bun.serve() routes at start time
+   */
+  private htmlRoutes = new Map<string, unknown>();
+
   private options: AsenaServeOptions = {} satisfies AsenaServeOptions;
 
   /**
@@ -159,6 +165,29 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * });
    * ```
    */
+  /**
+   * Registers an HTML route for FrontendController pages.
+   * HTML routes bypass the middleware chain and are served directly by Bun.serve().
+   *
+   * @param path - Full URL path (e.g., '/ui/home')
+   * @param htmlBundle - The HTML bundle returned by importing an .html file
+   */
+  public registerHTMLRoute(path: string, htmlBundle: unknown): void {
+    if (this.htmlRoutes.has(path)) {
+      throw new Error(`Duplicate HTML route: "${path}" is already registered.`);
+    }
+
+    this.htmlRoutes.set(path, htmlBundle);
+
+    // Register trailing slash variant for consistent routing
+    // e.g., /ui → also register /ui/ (or vice versa)
+    if (path !== '/' && !path.endsWith('/')) {
+      this.htmlRoutes.set(`${path}/`, htmlBundle);
+    } else if (path !== '/' && path.endsWith('/')) {
+      this.htmlRoutes.set(path.slice(0, -1), htmlBundle);
+    }
+  }
+
   public use(middleware: BaseMiddleware<Context>, config?: GlobalMiddlewareConfig['routes']): void {
     this.globalMiddlewares.push({ middleware, config });
   }
@@ -217,6 +246,15 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
       // 4. Merge routes
       const finalRoutes = this.mergeRoutes(httpRoutes, wsRoutes);
+
+      // 4.5. Merge HTML routes (FrontendController pages)
+      for (const [htmlPath, htmlBundle] of this.htmlRoutes) {
+        if (finalRoutes[htmlPath]) {
+          throw new Error(`HTML route collision at "${htmlPath}": path already registered as an API or WebSocket route.`);
+        }
+
+        finalRoutes[htmlPath] = htmlBundle;
+      }
 
       // 5. Prepare WebSocket before starting server
       await this.websocketAdapter.prepareWebSocket(this.options.wsOptions);
@@ -333,7 +371,16 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
       // Build Bun router object for each path
       for (const [path, pathRoutes] of routesByPath) {
-        routes[path] = {};
+        // Normalize trailing slash to support both variants
+        // This ensures /users and /users/ both work with query params
+        const normalizedPath = path.endsWith('/') && path !== '/' ? path.slice(0, -1) : path;
+        const pathWithSlash = normalizedPath === '/' ? '/' : `${normalizedPath}/`;
+
+        // Initialize both path variants (skip duplicate for root path)
+        routes[normalizedPath] = routes[normalizedPath] || {};
+        if (normalizedPath !== '/') {
+          routes[pathWithSlash] = routes[pathWithSlash] || {};
+        }
 
         for (const route of pathRoutes) {
           const method = route.method.toUpperCase();
@@ -349,19 +396,54 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
             !route.validator &&
             !route.staticServe;
 
-          if (isSimpleRoute) {
-            // Use fast path handler for simple routes (minimal overhead)
-            routes[path][method] = this.createFastPathHandler(route);
+          // Create handler based on route complexity
+          const handler = isSimpleRoute
+            ? this.createFastPathHandler(route)
+            : this.createRouteHandler(route, commonMiddlewares);
+
+          // Register handler to both path variants for trailing slash support
+          if (method === 'ALL') {
+            // Bun native: direct handler function matches all HTTP methods
+            routes[normalizedPath] = handler;
+            if (normalizedPath !== '/') {
+              routes[pathWithSlash] = handler;
+            }
           } else {
-            // Use full-featured handler for complex routes
-            routes[path][method] = this.createRouteHandler(route, commonMiddlewares);
+            routes[normalizedPath][method] = handler;
+            if (normalizedPath !== '/') {
+              routes[pathWithSlash][method] = handler;
+            }
           }
         }
       }
     }
 
-    // Add 404 handler with static headers
-    routes['/*'] = () => {
+    // Catch-all handler for unmatched routes (including OPTIONS preflight)
+    // Runs global middlewares so CORS and other cross-cutting concerns work for all requests
+    routes['/*'] = async (req: Request): Promise<Response> => {
+      const context = new ErgenecoreContextWrapper(req, this.server);
+      const requestPath = new URL(req.url).pathname;
+
+      // Filter and run applicable global middlewares
+      const applicableMiddlewares = this.globalMiddlewares
+        .filter(({ config }) => shouldApplyMiddleware(requestPath, config))
+        .map(({ middleware }) => middleware);
+
+      if (applicableMiddlewares.length > 0) {
+        const result = await this.executeMiddlewares(context, applicableMiddlewares);
+
+        if (result instanceof Response) return result;
+
+        if (result === false) {
+          return new Response('Forbidden', { status: 403 });
+        }
+      }
+
+      // No middleware handled the request → error handler or 404
+      if (this.errorHandler) {
+        return this.errorHandler(new Error('Not Found'), context);
+      }
+
       return new Response(JSON.stringify({ error: 'Not Found' }), {
         status: 404,
         headers: STATIC_JSON_HEADERS,
@@ -437,17 +519,30 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     context: Context,
     middlewares: BaseMiddleware<Context>[],
     index = 0,
+    onComplete?: () => Promise<Response | boolean | void>,
   ): Promise<boolean | Response> {
     // Base case: all middlewares executed successfully
     if (index >= middlewares.length) {
+      if (onComplete) {
+        const result = await onComplete();
+
+        if (result instanceof Response) return result;
+
+        if (result === false) return false;
+      }
+
       return true;
     }
 
     const middleware = middlewares[index];
 
+    let nextCalled = false;
+
     // Create next() function that executes the next middleware in chain
     const next = async (): Promise<void> => {
-      const result = await this.executeMiddlewares(context, middlewares, index + 1);
+      nextCalled = true;
+
+      const result = await this.executeMiddlewares(context, middlewares, index + 1, onComplete);
 
       // If next middleware returned Response, throw MiddlewareResponseError to propagate it
       if (result instanceof Response) {
@@ -474,7 +569,12 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         return false;
       }
 
-      // Middleware executed successfully
+      // If middleware returned true/void without calling next(), auto-continue the chain
+      if (!nextCalled) {
+        return await this.executeMiddlewares(context, middlewares, index + 1, onComplete);
+      }
+
+      // Middleware called next() and completed successfully
       return true;
     } catch (error) {
       // If middleware threw HttpException, convert to Response
@@ -528,7 +628,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     return async (req: Request): Promise<Response | undefined> => {
       try {
         // Create context wrapper
-        const context = new ErgenecoreContextWrapper(req);
+        const context = new ErgenecoreContextWrapper(req, this.server);
 
         // Execute filtered global middlewares with real next() chain
         if (applicableGlobalMiddlewares.length > 0) {
@@ -688,7 +788,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     // If no error handler is set, use ultra-minimal version with default error handling
     if (!this.errorHandler) {
       return async (req: Request): Promise<Response> => {
-        const context = new ErgenecoreContextWrapper(req);
+        const context = new ErgenecoreContextWrapper(req, this.server);
 
         try {
           // Inject Bun's native route params if present
@@ -739,7 +839,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
     // With error handler (minimal try-catch)
     return async (req: Request): Promise<Response> => {
-      const context = new ErgenecoreContextWrapper(req);
+      const context = new ErgenecoreContextWrapper(req, this.server);
 
       try {
         // Inject Bun's native route params if present
@@ -801,7 +901,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
     return async (req: Request): Promise<Response> => {
       // Create context wrapper outside try block so it's accessible in catch
-      const context = new ErgenecoreContextWrapper(req);
+      const context = new ErgenecoreContextWrapper(req, this.server);
 
       // Inject Bun's native route params
       // @ts-expect-error - Bun adds params to Request
@@ -815,63 +915,56 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       }
 
       try {
-        // Execute filtered global middlewares with real next() chain
-        if (applicableGlobalMiddlewares.length > 0) {
-          const result = await this.executeMiddlewares(context, applicableGlobalMiddlewares);
+        // Combine global + route middlewares into a single chain
+        const allMiddlewares = [
+          ...applicableGlobalMiddlewares,
+          ...(route.middlewares || []),
+        ];
 
-          // If middleware returned a custom response, return it
-          if (result instanceof Response) {
-            return result;
+        // Execute middleware chain with handler as onComplete callback
+        // This ensures the handler runs INSIDE the middleware async context
+        const result = await this.executeMiddlewares(context, allMiddlewares, 0, async () => {
+          // Execute validation
+          if (route.validator) {
+            const validationResult = await this.validateRequest(context, route.validator);
+
+            if (validationResult) return validationResult;
           }
 
-          // If middleware returned false, return 403
-          if (result === false) {
-            return new Response('Forbidden', { status: 403 });
-          }
-        }
+          // Handle static file serving
+          if (route.staticServe) {
+            const staticResponse = await this.serveStaticFile(req, context, route.staticServe);
 
-        // Execute route middlewares with real next() chain
-        if (route.middlewares && route.middlewares.length > 0) {
-          const result = await this.executeMiddlewares(context, route.middlewares);
-
-          // If middleware returned a custom response, return it
-          if (result instanceof Response) {
-            return result;
+            if (staticResponse) return staticResponse;
           }
 
-          // If middleware returned false, return 403
-          if (result === false) {
-            return new Response('Forbidden', { status: 403 });
+          // Execute route handler
+          const response = await route.handler(context);
+
+          // If handler returns Response, return it directly
+          if (response instanceof Response) {
+            return response;
           }
-        }
 
-        // Execute validation
-        if (route.validator) {
-          const validationResult = await this.validateRequest(context, route.validator);
-
-          if (validationResult) return validationResult;
-        }
-
-        // Handle static file serving
-        if (route.staticServe) {
-          const staticResponse = await this.serveStaticFile(req, context, route.staticServe);
-
-          if (staticResponse) return staticResponse;
-        }
-
-        // Execute route handler
-        const response = await route.handler(context);
-
-        // If handler returns Response, return it directly
-        if (response instanceof Response) {
-          return response;
-        }
-
-        // Otherwise, wrap in Response
-        return new Response(JSON.stringify(response), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
+          // Otherwise, wrap in Response
+          return new Response(JSON.stringify(response), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
         });
+
+        // If middleware chain returned a custom response, return it
+        if (result instanceof Response) {
+          return result;
+        }
+
+        // If middleware chain returned false (stopped), return 403
+        if (result === false) {
+          return new Response('Forbidden', { status: 403 });
+        }
+
+        // Default: result is true (should not happen with onComplete, but just in case)
+        return new Response(null, { status: 204 });
       } catch (error) {
         // If handler or middleware threw HttpException, convert to Response
         if (error instanceof HttpException) {

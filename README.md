@@ -70,8 +70,8 @@ await server.start();
 ### Controller Example
 
 ```typescript
-import { Controller } from '@asenajs/asena/server';
-import { Get, Post, Put, Delete } from '@asenajs/asena/web';
+import { Controller } from '@asenajs/asena/decorators';
+import { Get, Post, Put, Delete } from '@asenajs/asena/decorators/http';
 import type { Context } from '@asenajs/ergenecore/types';
 
 @Controller('/users')
@@ -225,9 +225,9 @@ const session = context.getCookie('session');
 #### Custom Middleware
 
 ```typescript
-import { Middleware } from '@asenajs/asena/server';
-import { Controller } from '@asenajs/asena/server';
-import { Get } from '@asenajs/asena/web';
+import { Middleware } from '@asenajs/asena/decorators';
+import { Controller } from '@asenajs/asena/decorators';
+import { Get } from '@asenajs/asena/decorators/http';
 import { MiddlewareService, type Context } from '@asenajs/ergenecore';
 
 @Middleware()
@@ -262,7 +262,7 @@ export class AdminController {
 Ergenecore comes with a built-in CORS middleware for handling Cross-Origin Resource Sharing:
 
 ```typescript
-import { Middleware } from '@asenajs/asena/server';
+import { Middleware } from '@asenajs/asena/decorators';
 import { CorsMiddleware } from '@asenajs/ergenecore';
 
 // Allow all origins (default)
@@ -303,7 +303,7 @@ export class DynamicCors extends CorsMiddleware {
 }
 
 // Use globally in server config
-import { Config } from '@asenajs/asena/server';
+import { Config } from '@asenajs/asena/decorators';
 import { ConfigService } from '@asenajs/ergenecore';
 
 @Config()
@@ -326,7 +326,7 @@ export class ApiController {
 Ergenecore includes a Token Bucket-based rate limiter for controlling request rates and preventing abuse:
 
 ```typescript
-import { Middleware } from '@asenajs/asena/server';
+import { Middleware } from '@asenajs/asena/decorators';
 import { RateLimiterMiddleware } from '@asenajs/ergenecore';
 
 // General API rate limiter (100 requests per minute)
@@ -381,7 +381,7 @@ export class CustomRateLimiter extends RateLimiterMiddleware {
 }
 
 // Use globally
-import { Config } from '@asenajs/asena/server';
+import { Config } from '@asenajs/asena/decorators';
 import { ConfigService } from '@asenajs/ergenecore';
 
 @Config()
@@ -432,8 +432,8 @@ The middleware automatically sets standard rate limit headers:
 ### Validation with Zod
 
 ```typescript
-import { Controller, Middleware } from '@asenajs/asena/server';
-import { Post } from '@asenajs/asena/web';
+import { Controller, Middleware } from '@asenajs/asena/decorators';
+import { Post } from '@asenajs/asena/decorators/http';
 import { ValidationService, type Context, type ValidationSchema, type ValidationSchemaWithHook } from '@asenajs/ergenecore';
 import { z } from 'zod';
 
@@ -471,8 +471,8 @@ async json(): Promise<ValidationSchema | ValidationSchemaWithHook> {
 ### Combining Middleware and Validation
 
 ```typescript
-import { Controller, Middleware } from '@asenajs/asena/server';
-import { Post } from '@asenajs/asena/web';
+import { Controller, Middleware } from '@asenajs/asena/decorators';
+import { Post } from '@asenajs/asena/decorators/http';
 import {
   MiddlewareService,
   ValidationService,
@@ -556,8 +556,8 @@ export class ChatSocket extends AsenaWebSocketService<void> {
 ### Static File Serving
 
 ```typescript
-import { Controller } from '@asenajs/asena/server';
-import { Get } from '@asenajs/asena/web';
+import { Controller } from '@asenajs/asena/decorators';
+import { Get } from '@asenajs/asena/decorators/http';
 import { StaticServe, StaticServeService } from '@asenajs/asena/static';
 import type { Context } from '@asenajs/ergenecore/types';
 
@@ -587,8 +587,8 @@ export class StaticController {
 ### Error Handling
 
 ```typescript
-import { Config } from '@asenajs/asena/server';
-import { Inject } from '@asenajs/asena/ioc';
+import { Config } from '@asenajs/asena/decorators';
+import { Inject } from '@asenajs/asena/decorators/ioc';
 import { ConfigService, type Context } from '@asenajs/ergenecore';
 
 @Config()

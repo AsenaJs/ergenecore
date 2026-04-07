@@ -5,6 +5,7 @@ import type { AsenaWebSocketService } from '@asenajs/asena/web-socket';
 import {
   AsenaSocket,
   AsenaWebSocketServer,
+  BunLocalTransport,
   type WebSocketData,
   type WSEvents,
   type WSOptions,
@@ -21,8 +22,6 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
   private activeConnections: Map<string, Set<string>> = new Map(); // namespace -> Set of connection IDs
 
   private connectionLimits: Map<string, number> = new Map(); // namespace -> max connections
-
-  private heartbeatIntervals: Map<string, NodeJS.Timeout> = new Map(); // connection ID -> interval
 
   public constructor(logger: ServerLogger) {
     super(logger);
@@ -96,11 +95,7 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
     this.logger.info('Starting WebSocket graceful shutdown...');
 
     // Stop all heartbeats
-    for (const interval of this.heartbeatIntervals.values()) {
-      clearInterval(interval);
-    }
-
-    this.heartbeatIntervals.clear();
+    this.clearAllHeartbeats();
 
     // Clear connection tracking
     this.activeConnections.clear();
@@ -112,14 +107,30 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
    * Prepares WebSocket configuration with lifecycle handlers
    * @param options - WebSocket options
    */
-  public prepareWebSocket(options?: WSOptions & { heartbeatInterval?: number }): void {
+  public prepareWebSocket(options?: WSOptions): void {
     if (!this.websockets || this.websockets.size < 1) {
       return;
     }
 
-    const heartbeatInterval = options?.heartbeatInterval;
+    const strategy = options?.sendPingStrategy ?? 'adapter';
+    // Heartbeat is only used in adapter strategy
+    const heartbeatInterval = strategy === 'adapter' ? options?.heartbeatInterval : undefined;
+
+    // Separate strategy/heartbeat fields from WSOptions to avoid conflicts
+    const {
+      sendPings: _sendPings,
+      sendPingStrategy: _strategy,
+      heartbeatInterval: _hbInterval,
+      ...restOptions
+    } = options ?? ({} as any);
 
     this.websocket = {
+      // Strategy controls sendPings:
+      //   'adapter' → false (Bun native disabled, adapter handles keepalive)
+      //   'native'  → true  (Bun native handles ping/pong)
+      // See: https://github.com/oven-sh/bun/issues/26554
+      sendPings: strategy === 'native',
+
       open: async (ws: ServerWebSocket<WebSocketData>) => {
         // Normalize to namespace format (remove leading /)
         const namespace = ws.data.path.replace(/^\//, '');
@@ -145,7 +156,7 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
 
         this.activeConnections.get(namespace).add(ws.data.id);
 
-        // Start heartbeat if enabled
+        // Start heartbeat if enabled (adapter strategy only)
         if (heartbeatInterval) {
           this.startHeartbeat(ws, heartbeatInterval);
         }
@@ -182,7 +193,7 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
       drain: this.createHandler('onDrain'),
       ping: this.createHandler('onPing'),
       pong: this.createHandler('onPong'),
-      ...options,
+      ...restOptions,
     };
   }
 
@@ -191,56 +202,22 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
    * All WebSocket services share the same wrapper instance for efficiency
    * @param server - Bun Server instance
    */
-  public startWebsocket(server: Server<any>): void {
+  public async startWebsocket(server: Server<any>): Promise<void> {
     if (!this.websockets || this.websockets.size < 1) {
       return;
     }
 
+    // Initialize transport (default: BunLocalTransport)
+    const transport = this._transport ?? new BunLocalTransport();
+
+    await transport.init?.(server);
+
     // Create a single shared wrapper for all WebSocket services
-    const sharedServer = new AsenaWebSocketServer(server);
+    const sharedServer = new AsenaWebSocketServer(transport);
 
     // Assign the shared wrapper to all services
     for (const websocket of this.websockets.values()) {
       websocket.server = sharedServer;
-    }
-  }
-
-  /**
-   * Starts heartbeat for a connection
-   * @param ws - WebSocket connection
-   * @param intervalMs - Heartbeat interval in milliseconds (default: 30000)
-   */
-  private startHeartbeat(ws: ServerWebSocket<WebSocketData>, intervalMs = 30000): void {
-    const interval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        try {
-          ws.ping();
-        } catch (error) {
-          this.logger.error(`Heartbeat ping failed for connection ${ws.data.id}:`, error);
-          this.stopHeartbeat(ws.data.id);
-
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.close(1011, 'Heartbeat failed');
-          }
-        }
-      } else {
-        this.stopHeartbeat(ws.data.id);
-      }
-    }, intervalMs);
-
-    this.heartbeatIntervals.set(ws.data.id, interval);
-  }
-
-  /**
-   * Stops heartbeat for a connection
-   * @param connectionId - Connection ID
-   */
-  private stopHeartbeat(connectionId: string): void {
-    const interval = this.heartbeatIntervals.get(connectionId);
-
-    if (interval) {
-      clearInterval(interval);
-      this.heartbeatIntervals.delete(connectionId);
     }
   }
 
@@ -274,7 +251,7 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
 
       try {
         await (handler as (socket: AsenaSocket<WebSocketData>, ...args: any[]) => void | Promise<void>)(
-          new AsenaSocket(ws, websocket.namespace),
+          new AsenaSocket(ws, websocket.namespace, this._transport),
           ...args,
         );
       } catch (error) {

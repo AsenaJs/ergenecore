@@ -1,5 +1,8 @@
-import type { AsenaContext, CookieExtra, SendOptions } from '@asenajs/asena/adapter';
+import type { Server } from 'bun';
+import type { AsenaContext, AsenaSSEStreamWriter, AsenaStreamWriter, AsenaVariables, CookieExtra, SendOptions } from '@asenajs/asena/adapter';
 import { HttpException } from './errors';
+import { SSEStreamWriter } from './stream';
+import { StreamWriter } from './stream';
 
 /**
  * CoreContext type alias for CoreContextWrapper
@@ -31,8 +34,13 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
     headers: Map<string, string>;
   };
 
-  public constructor(request: Request) {
+  private _server?: Server<never>;
+
+  private _requestIp?: string | null;
+
+  public constructor(request: Request, server?: Server<never>) {
     this.request = request;
+    this._server = server;
   }
 
   /**
@@ -215,6 +223,47 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
   }
 
   /**
+   * Get all query parameters as a key-value object
+   */
+  public getAllQueries(): Record<string, string | string[]> {
+    const result: Record<string, string | string[]> = {};
+
+    for (const [key, value] of this.url.searchParams.entries()) {
+      if (key in result) {
+        const existing = result[key];
+
+        result[key] = Array.isArray(existing) ? [...existing, value] : [existing, value];
+      } else {
+        result[key] = value;
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Get the client IP address (lazy evaluated, cached)
+   *
+   * Uses Bun's server.requestIP() to resolve the actual TCP connection IP.
+   * Only computed on first call - zero cost if never accessed.
+   *
+   * @returns The client IP address, or null if unavailable
+   */
+  public getRequestIp(): string | null {
+    if (this._requestIp === undefined) {
+      if (this._server) {
+        const addr = this._server.requestIP(this.request);
+
+        this._requestIp = addr?.address ?? null;
+      } else {
+        this._requestIp = null;
+      }
+    }
+
+    return this._requestIp;
+  }
+
+  /**
    * Set a response header that will be included in the final response
    *
    * Uses the mock Response object's headers Map.
@@ -357,15 +406,21 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
   }
 
   /**
-   * Get value from context store
+   * Get value from context store.
+   * Type-safe when AsenaVariables is augmented.
    */
-  public getValue<T = any>(key: string): T {
-    return this.values.get(key) as T;
+  public getValue<K extends keyof AsenaVariables>(key: K): AsenaVariables[K];
+  public getValue<T = any>(key: string): T;
+  public getValue(key: string): any {
+    return this.values.get(key);
   }
 
   /**
-   * Set value in context store
+   * Set value in context store.
+   * Type-safe when AsenaVariables is augmented.
    */
+  public setValue<K extends keyof AsenaVariables>(key: K, value: AsenaVariables[K]): void;
+  public setValue(key: string, value: any): void;
   public setValue(key: string, value: any): void {
     this.values.set(key, value);
   }
@@ -399,6 +454,106 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
       status,
       headers: mergedHeaders,
     });
+  }
+
+  /**
+   * Start a generic binary/text stream
+   */
+  public stream(
+    cb: (stream: AsenaStreamWriter) => Promise<void>,
+    onError?: (error: Error, stream: AsenaStreamWriter) => Promise<void>,
+  ): Response {
+    const { readable, writable } = new TransformStream();
+    const stream = new StreamWriter(writable, readable);
+
+    this.wireAbort(stream);
+
+    const headers = this.mergeHeaders();
+
+    this.runStreamCallback(stream, cb, onError);
+
+    return new Response(stream.responseReadable, { status: 200, headers });
+  }
+
+  /**
+   * Start a Server-Sent Events stream
+   */
+  public streamSSE(
+    cb: (stream: AsenaSSEStreamWriter) => Promise<void>,
+    onError?: (error: Error, stream: AsenaSSEStreamWriter) => Promise<void>,
+  ): Response {
+    const { readable, writable } = new TransformStream();
+    const stream = new SSEStreamWriter(writable, readable);
+
+    this.wireAbort(stream);
+
+    const headers = this.mergeHeaders({
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+
+    this.runStreamCallback(stream, cb, onError);
+
+    return new Response(stream.responseReadable, { status: 200, headers });
+  }
+
+  /**
+   * Start a text stream with text/plain content-type
+   */
+  public streamText(
+    cb: (stream: AsenaStreamWriter) => Promise<void>,
+    onError?: (error: Error, stream: AsenaStreamWriter) => Promise<void>,
+  ): Response {
+    const { readable, writable } = new TransformStream();
+    const stream = new StreamWriter(writable, readable);
+
+    this.wireAbort(stream);
+
+    const headers = this.mergeHeaders({
+      'Content-Type': 'text/plain',
+      'X-Content-Type-Options': 'nosniff',
+    });
+
+    this.runStreamCallback(stream, cb, onError);
+
+    return new Response(stream.responseReadable, { status: 200, headers });
+  }
+
+  /**
+   * Wire request abort signal to stream abort
+   */
+  private wireAbort(stream: StreamWriter): void {
+    this.request.signal.addEventListener('abort', () => {
+      if (!stream.closed) {
+        stream.abort();
+      }
+    });
+  }
+
+  /**
+   * Fire-and-forget the streaming callback with error handling
+   */
+  private runStreamCallback<T extends AsenaStreamWriter>(
+    stream: T,
+    cb: (stream: T) => Promise<void>,
+    onError?: (error: Error, stream: T) => Promise<void>,
+  ): void {
+    (async () => {
+      try {
+        await cb(stream);
+      } catch (e) {
+        if (e instanceof Error && onError) {
+          await onError(e, stream);
+        } else {
+          console.error(e);
+        }
+      } finally {
+        if (!stream.closed) {
+          await stream.close();
+        }
+      }
+    })();
   }
 
   /**

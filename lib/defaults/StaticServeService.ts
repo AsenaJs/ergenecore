@@ -9,7 +9,7 @@ import type { Context } from '../ErgenecoreContextWrapper';
  *
  * @example
  * ```typescript
- * import { StaticServe } from '@asenajs/asena/server';
+ * import { StaticServe } from '@asenajs/asena/decorators';
  * import { StaticServeService } from '@asenajs/ergenecore';
  * import path from 'path';
  *

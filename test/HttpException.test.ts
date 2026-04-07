@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { HttpException } from '../lib';
+import { ClientErrorStatusCode, ServerErrorStatusCode } from '@asenajs/asena/web-types';
 
 describe('HttpException', () => {
   describe('constructor', () => {
@@ -268,6 +269,73 @@ describe('HttpException', () => {
       const responseBody = await response.json();
 
       expect(responseBody).toEqual(body);
+    });
+  });
+
+  describe('HttpStatusCode support', () => {
+    it('should accept ClientErrorStatusCode enum', () => {
+      const exception = new HttpException(ClientErrorStatusCode.NotFound, 'Not Found');
+
+      expect(exception.status).toBe(404);
+      expect(exception.body).toBe('Not Found');
+    });
+
+    it('should accept ServerErrorStatusCode enum', () => {
+      const exception = new HttpException(ServerErrorStatusCode.InternalServerError, 'Server Error');
+
+      expect(exception.status).toBe(500);
+
+      const response = exception.getResponse();
+
+      expect(response.status).toBe(500);
+    });
+
+    it('should still accept plain numbers', () => {
+      const exception = new HttpException(418, "I'm a teapot");
+
+      expect(exception.status).toBe(418);
+    });
+  });
+
+  describe('cause support', () => {
+    it('should support cause option', () => {
+      const cause = new Error('original database error');
+      const exception = new HttpException(500, 'Internal Server Error', { cause });
+
+      expect(exception.cause).toBe(cause);
+      expect(exception.status).toBe(500);
+    });
+
+    it('should support cause with headers', () => {
+      const cause = new Error('db connection failed');
+      const exception = new HttpException(500, 'Database Error', {
+        cause,
+        headers: { 'X-Error-Source': 'database' },
+      });
+
+      expect(exception.cause).toBe(cause);
+
+      const response = exception.getResponse();
+
+      expect(response.headers.get('X-Error-Source')).toBe('database');
+      expect(response.status).toBe(500);
+    });
+
+    it('should work without cause (backward compatible)', () => {
+      const exception = new HttpException(400, 'Bad Request', {
+        headers: { 'X-Custom': 'value' },
+      });
+
+      expect(exception.cause).toBeUndefined();
+      expect(exception.options?.headers).toEqual({ 'X-Custom': 'value' });
+    });
+
+    it('should support cause with HttpStatusCode enum', () => {
+      const cause = new TypeError('invalid type');
+      const exception = new HttpException(ClientErrorStatusCode.BadRequest, 'Validation Error', { cause });
+
+      expect(exception.status).toBe(400);
+      expect(exception.cause).toBe(cause);
     });
   });
 });
