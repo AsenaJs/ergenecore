@@ -1,5 +1,18 @@
 # @asenajs/ergenecore
 
+## 1.3.1
+
+### Patch Changes
+
+- ### Features
+  - **FrontendController Logging**: FrontendController routes are now logged in the controller summary with route counts, grouped by controller name and base path.
+  - **Route Pattern**: `routePattern` is now set on the context object for all route types (GET, POST, PUT, DELETE, WebSocket), providing matched route patterns for OpenTelemetry and middleware.
+  - **Status Code Tracking**: Response methods (send, redirect, html, stream, sse, file) now track the HTTP status code on the response object.
+
+  ### Tests
+  - Added HTML route registration tests (duplicate detection, trailing slash variant).
+  - Added FrontendController summary logging tests.
+
 ## 1.3.0
 
 ### Minor Changes

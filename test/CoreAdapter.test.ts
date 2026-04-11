@@ -432,4 +432,82 @@ describe('CoreAdapter', () => {
       await adapter.stop();
     });
   });
+
+  // ─── HTML Routes ──────────────────────────────────────────────────
+
+  describe('HTML Routes', () => {
+    it('should register HTML route and its trailing slash variant', () => {
+      adapter.registerHTMLRoute('/ui/home', '<html>Home</html>', 'FrontEnd', '/ui');
+      adapter.registerHTMLRoute('/ui/about', '<html>About</html>', 'FrontEnd', '/ui');
+
+      expect(adapter['htmlRoutes'].size).toBe(4); // 2 routes + 2 trailing slash variants
+      expect(adapter['frontEndRouteQueue'].length).toBe(2);
+    });
+
+    it('should throw on duplicate HTML route', () => {
+      adapter.registerHTMLRoute('/ui/home', '<html>Home</html>', 'FrontEnd', '/ui');
+
+      expect(() => {
+        adapter.registerHTMLRoute('/ui/home', '<html>Duplicate</html>', 'FrontEnd', '/ui');
+      }).toThrow('Duplicate HTML route');
+    });
+
+    it('should log FRONTEND controller summary on start', async () => {
+      const logger: ServerLogger = {
+        info: mock(() => {}),
+        error: mock(() => {}),
+        warn: mock(() => {}),
+        profile: mock(() => {}),
+      };
+
+      const testWsAdapter = new ErgenecoreWebsocketAdapter(logger);
+      const testAdapter = new Ergenecore(logger, testWsAdapter);
+
+      const mockBundle = new Response('<html>Home</html>', { headers: { 'Content-Type': 'text/html' } });
+      const mockBundle2 = new Response('<html>About</html>', { headers: { 'Content-Type': 'text/html' } });
+
+      testAdapter.registerHTMLRoute('/ui/home', mockBundle, 'FrontEnd', '/ui');
+      testAdapter.registerHTMLRoute('/ui/about', mockBundle2, 'FrontEnd', '/ui');
+
+      await testAdapter.start();
+
+      const infoCalls = (logger.info as any).mock.calls.map((c: any) => c[0]);
+      const summaryLog = infoCalls.find((msg: string) => msg.includes('FRONTEND') && msg.includes('FrontEnd'));
+      const detailLog = infoCalls.find((msg: string) => msg.includes('HTML') && msg.includes('/ui/home'));
+
+      expect(summaryLog).toBeDefined();
+      expect(detailLog).toBeDefined();
+
+      await testAdapter.stop();
+    });
+
+    it('should group frontend routes by controller in log output', async () => {
+      const logger: ServerLogger = {
+        info: mock(() => {}),
+        error: mock(() => {}),
+        warn: mock(() => {}),
+        profile: mock(() => {}),
+      };
+
+      const testWsAdapter = new ErgenecoreWebsocketAdapter(logger);
+      const testAdapter = new Ergenecore(logger, testWsAdapter);
+
+      const mockBundle1 = new Response('<html>Home</html>', { headers: { 'Content-Type': 'text/html' } });
+      const mockBundle2 = new Response('<html>Dashboard</html>', { headers: { 'Content-Type': 'text/html' } });
+
+      testAdapter.registerHTMLRoute('/ui/home', mockBundle1, 'FrontEnd', '/ui');
+      testAdapter.registerHTMLRoute('/admin/dashboard', mockBundle2, 'AdminFrontEnd', '/admin');
+
+      await testAdapter.start();
+
+      const infoCalls = (logger.info as any).mock.calls.map((c: any) => c[0]);
+      const hasFrontEnd = infoCalls.some((msg: string) => msg.includes('FrontEnd'));
+      const hasAdmin = infoCalls.some((msg: string) => msg.includes('AdminFrontEnd'));
+
+      expect(hasFrontEnd).toBe(true);
+      expect(hasAdmin).toBe(true);
+
+      await testAdapter.stop();
+    });
+  });
 });

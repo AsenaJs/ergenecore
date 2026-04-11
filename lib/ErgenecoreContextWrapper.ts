@@ -16,6 +16,8 @@ export type Context = ErgenecoreContextWrapper;
  * allowing Asena to work with different adapters without changing user code.
  */
 export class ErgenecoreContextWrapper implements AsenaContext<Request, Response> {
+  public routePattern?: string;
+
   private readonly request: Request;
 
   private _url?: URL;
@@ -32,6 +34,7 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
    */
   private _mockResponse?: {
     headers: Map<string, string>;
+    status?: number;
   };
 
   private _server?: Server<never>;
@@ -285,6 +288,8 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
     const { headers = {}, status = 200 } =
       typeof statusOrOptions === 'number' ? { status: statusOrOptions } : statusOrOptions || {};
 
+    this.res.status = status;
+
     const mergedHeaders = this.mergeHeaders(headers);
 
     if (typeof data === 'string') {
@@ -399,6 +404,8 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
    * Redirect to a URL
    */
   public redirect(url: string): Response {
+    this.res.status = 302;
+
     return new Response(null, {
       status: 302,
       headers: { Location: url },
@@ -448,6 +455,8 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
     const { headers = {}, status = 200 } =
       typeof statusOrOptions === 'number' ? { status: statusOrOptions } : statusOrOptions || {};
 
+    this.res.status = status;
+
     const mergedHeaders = this.mergeHeaders({ 'Content-Type': 'text/html', ...headers });
 
     return new Response(data, {
@@ -469,6 +478,8 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
     this.wireAbort(stream);
 
     const headers = this.mergeHeaders();
+
+    this.res.status = 200;
 
     this.runStreamCallback(stream, cb, onError);
 
@@ -493,6 +504,8 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
       Connection: 'keep-alive',
     });
 
+    this.res.status = 200;
+
     this.runStreamCallback(stream, cb, onError);
 
     return new Response(stream.responseReadable, { status: 200, headers });
@@ -514,6 +527,8 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
       'Content-Type': 'text/plain',
       'X-Content-Type-Options': 'nosniff',
     });
+
+    this.res.status = 200;
 
     this.runStreamCallback(stream, cb, onError);
 
