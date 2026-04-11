@@ -97,6 +97,11 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    */
   private htmlRoutes = new Map<string, unknown>();
 
+  /**
+   * Queue of FrontendController route metadata for deferred logging at start time
+   */
+  private frontEndRouteQueue: { path: string; controllerName: string; controllerBasePath: string }[] = [];
+
   private options: AsenaServeOptions = {} satisfies AsenaServeOptions;
 
   /**
@@ -172,12 +177,18 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * @param path - Full URL path (e.g., '/ui/home')
    * @param htmlBundle - The HTML bundle returned by importing an .html file
    */
-  public registerHTMLRoute(path: string, htmlBundle: unknown): void {
+  public registerHTMLRoute(
+    path: string,
+    htmlBundle: unknown,
+    controllerName: string,
+    controllerBasePath: string,
+  ): void {
     if (this.htmlRoutes.has(path)) {
       throw new Error(`Duplicate HTML route: "${path}" is already registered.`);
     }
 
     this.htmlRoutes.set(path, htmlBundle);
+    this.frontEndRouteQueue.push({ path, controllerName, controllerBasePath });
 
     // Register trailing slash variant for consistent routing
     // e.g., /ui → also register /ui/ (or vice versa)
@@ -276,7 +287,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       this.routesBuilt = true;
 
       // Log controller summary first
-      if (this.routeQueue.length > 0 || this.wsRouteQueue.length > 0) {
+      if (this.routeQueue.length > 0 || this.wsRouteQueue.length > 0 || this.frontEndRouteQueue.length > 0) {
         this.logControllerSummary();
 
         // Then log detailed route list
@@ -790,6 +801,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       return async (req: Request): Promise<Response> => {
         const context = new ErgenecoreContextWrapper(req, this.server);
 
+        context.routePattern = route.path;
+
         try {
           // Inject Bun's native route params if present
           // @ts-expect-error - Bun adds params to Request
@@ -840,6 +853,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     // With error handler (minimal try-catch)
     return async (req: Request): Promise<Response> => {
       const context = new ErgenecoreContextWrapper(req, this.server);
+
+      context.routePattern = route.path;
 
       try {
         // Inject Bun's native route params if present
@@ -902,6 +917,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     return async (req: Request): Promise<Response> => {
       // Create context wrapper outside try block so it's accessible in catch
       const context = new ErgenecoreContextWrapper(req, this.server);
+
+      context.routePattern = route.path;
 
       // Inject Bun's native route params
       // @ts-expect-error - Bun adds params to Request
@@ -1619,6 +1636,18 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         );
       }
     }
+
+    // Log FrontendControllers
+    const frontEndGroups = this.groupFrontEndRoutesByController();
+
+    for (const [controllerName, group] of frontEndGroups) {
+      const routeCount = group.routes.length;
+      const routeText = routeCount === 1 ? 'route' : 'routes';
+
+      this.logger.info(
+        `${green('✓')} Successfully registered ${yellow('FRONTEND')} ${blue(controllerName)} ${yellow(`(${routeCount} ${routeText})`)}`,
+      );
+    }
   }
 
   /**
@@ -1752,6 +1781,40 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       lines.push(''); // Empty line between namespaces
     }
 
+    // 4. Frontend controllers (HTML routes)
+    const frontEndGroups = this.groupFrontEndRoutesByController();
+    const sortedFrontEnd = Array.from(frontEndGroups.entries()).sort(([a], [b]) => a.localeCompare(b));
+
+    for (const [controllerName, group] of sortedFrontEnd) {
+      lines.push(`  ${blue(controllerName)} ${yellow(`(${group.basePath})`)}`);
+
+      for (const route of group.routes) {
+        lines.push(`    ${green('HTML')} ${route.path}`);
+      }
+
+      lines.push('');
+    }
+
     return lines.join('\n');
+  }
+
+  /**
+   * Groups FrontendController routes by controller name for logging
+   */
+  private groupFrontEndRoutesByController(): Map<string, { basePath: string; routes: { path: string }[] }> {
+    const groups = new Map<string, { basePath: string; routes: { path: string }[] }>();
+
+    for (const route of this.frontEndRouteQueue) {
+      if (!groups.has(route.controllerName)) {
+        groups.set(route.controllerName, {
+          basePath: route.controllerBasePath,
+          routes: [],
+        });
+      }
+
+      groups.get(route.controllerName).routes.push({ path: route.path });
+    }
+
+    return groups;
   }
 }
