@@ -36,7 +36,7 @@ Ergenecore is the **fastest** Asena adapter because it:
 
 ## Requirements
 
-- [Bun](https://bun.sh) v1.3 or higher
+- [Bun](https://bun.sh) v1.3.12 or higher
 - TypeScript v5.8.2 or higher
 
 ## Installation

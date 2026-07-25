@@ -2,6 +2,7 @@ import type { WebsocketRouteParams } from '@asenajs/asena/adapter';
 import {
   AsenaAdapter,
   type AsenaServeOptions,
+  type AsenaStartOptions,
   type BaseMiddleware,
   type BaseStaticServeParams,
   type BaseValidator,
@@ -241,7 +242,11 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * @param port - Optional port to override default
    * @returns Bun server instance
    */
-  public async start(port?: number): Promise<Server<any>> {
+  public async start(portOrOptions?: number | AsenaStartOptions): Promise<Server<any>> {
+    // A bare port keeps the original signature working; AsenaServer passes start options
+    const explicitPort = typeof portOrOptions === 'number' ? portOrOptions : undefined;
+    const startOptions: AsenaStartOptions = typeof portOrOptions === 'object' ? portOrOptions : {};
+
     // Build routes if not built yet
     const serverHostname = this._hostname;
 
@@ -270,16 +275,26 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       // 5. Prepare WebSocket before starting server
       await this.websocketAdapter.prepareWebSocket(this.options.wsOptions);
 
-      const serverPort = port ?? this.port;
+      const serverPort = explicitPort ?? this.port;
 
       // 6. Start Bun server with merged routes
-      this.server = Bun.serve({
+      const serveConfig: any = {
         ...this.options.serveOptions,
-        port: serverPort,
-        hostname: serverHostname,
         routes: finalRoutes,
         websocket: this.websocketAdapter.websocket,
-      } as any);
+      };
+
+      if (startOptions.unix) {
+        // Bun throws "Cannot specify both hostname and unix", and a port means nothing here
+        serveConfig.unix = startOptions.unix;
+        delete serveConfig.hostname;
+        delete serveConfig.port;
+      } else {
+        serveConfig.port = serverPort;
+        serveConfig.hostname = serverHostname;
+      }
+
+      this.server = Bun.serve(serveConfig);
 
       // Start WebSocket server (initializes AsenaWebSocketServer for each namespace)
       await this.websocketAdapter.startWebsocket(this.server);
@@ -299,7 +314,11 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
     const hostDisplay = serverHostname || 'localhost';
 
-    this.logger.info(`Server ready → http://${hostDisplay}:${this.server.port}`);
+    this.logger.info(
+      startOptions.unix
+        ? `Server ready → unix:${startOptions.unix}`
+        : `Server ready → http://${hostDisplay}:${this.server.port}`,
+    );
 
     return this.server;
   }
