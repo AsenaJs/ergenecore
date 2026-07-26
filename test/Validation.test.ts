@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { Ergenecore, ErgenecoreWebsocketAdapter } from '../lib';
+import { Ergenecore, ErgenecoreWebsocketAdapter, HttpException, ValidationError } from '../lib';
 import type { ServerLogger } from '@asenajs/asena/logger';
-import type { BaseValidator } from '@asenajs/asena/adapter';
+import { type BaseValidator, isValidationError } from '@asenajs/asena/adapter';
 import { HttpMethod } from '@asenajs/asena/web-types';
 import type { Context } from '../lib';
 import type { Server } from 'bun';
@@ -737,6 +737,84 @@ describe('Validation System', () => {
 
       expect(data.post.title).toBe('My Blog Post');
       expect(data.isDraft).toBe(true);
+    });
+  });
+
+  describe('Validation errors and the global error handler', () => {
+    const emailValidator: BaseValidator<ValidationSchemaWithHook> = {
+      json: {
+        handle: () => ({ schema: z.object({ email: z.string().min(3) }) }),
+        override: false,
+      },
+    };
+
+    const postInvalid = async () =>
+      fetch(`${baseUrl}/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'x' }),
+      });
+
+    const registerSignup = () => {
+      adapter.registerRoute({
+        staticServe: undefined,
+        method: HttpMethod.POST,
+        path: '/signup',
+        middlewares: [],
+        validator: emailValidator,
+        handler: async (ctx: Context) => ctx.send({ ok: true }),
+      });
+    };
+
+    it('should route validation failures to the error handler as a ValidationError', async () => {
+      let seen: Error | undefined;
+
+      adapter.onError((error, ctx) => {
+        seen = error;
+
+        if (isValidationError(error)) {
+          return ctx.send({ success: false, errors: error.issues }, 400);
+        }
+
+        return ctx.send({ success: false }, 500);
+      });
+
+      registerSignup();
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const response = await postInvalid();
+
+      expect(response.status).toBe(400);
+
+      const data = await response.json();
+
+      expect(data.success).toBe(false);
+      expect(data.errors[0].path).toEqual(['email']);
+
+      // Subclassing HttpException is what keeps an existing `instanceof HttpException`
+      // branch answering 400 instead of 500
+      expect(seen).toBeInstanceOf(ValidationError);
+      expect(seen).toBeInstanceOf(HttpException);
+      expect((seen as ValidationError).status).toBe(400);
+      expect((seen as ValidationError).target).toBe('json');
+    });
+
+    it('should keep the default envelope when no error handler is configured', async () => {
+      registerSignup();
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const response = await postInvalid();
+
+      expect(response.status).toBe(400);
+
+      const data = await response.json();
+
+      expect(data.error).toBe('Validation failed');
+      expect(data.details.fieldErrors.email).toBeDefined();
     });
   });
 });

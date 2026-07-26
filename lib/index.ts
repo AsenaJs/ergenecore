@@ -32,7 +32,7 @@ export { StreamWriter } from './stream/StreamWriter';
 export { SSEStreamWriter } from './stream/SSEStreamWriter';
 
 // Error classes
-export { HttpException, type HttpExceptionInit } from './errors';
+export { HttpException, type HttpExceptionInit, ValidationError } from './errors';
 
 // Factory functions
 export {

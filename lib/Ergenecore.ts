@@ -19,8 +19,10 @@ import type { Server } from 'bun';
 import * as Bun from 'bun';
 import * as path from 'path';
 import type { StaticServeExtras, ValidationSchema, ValidationSchemaWithHook } from './types';
-import { HttpException, MiddlewareResponseError } from './errors';
+import { flattenError } from 'zod';
+import { HttpException, MiddlewareResponseError, ValidationError } from './errors';
 import { shouldApplyMiddleware } from '@asenajs/asena/utils';
+import { isValidationError } from '@asenajs/asena/adapter';
 
 /**
  * Static response headers for performance
@@ -266,7 +268,9 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       // 4.5. Merge HTML routes (FrontendController pages)
       for (const [htmlPath, htmlBundle] of this.htmlRoutes) {
         if (finalRoutes[htmlPath]) {
-          throw new Error(`HTML route collision at "${htmlPath}": path already registered as an API or WebSocket route.`);
+          throw new Error(
+            `HTML route collision at "${htmlPath}": path already registered as an API or WebSocket route.`,
+          );
         }
 
         finalRoutes[htmlPath] = htmlBundle;
@@ -952,10 +956,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
       try {
         // Combine global + route middlewares into a single chain
-        const allMiddlewares = [
-          ...applicableGlobalMiddlewares,
-          ...(route.middlewares || []),
-        ];
+        const allMiddlewares = [...applicableGlobalMiddlewares, ...(route.middlewares || [])];
 
         // Execute middleware chain with handler as onComplete callback
         // This ensures the handler runs INSIDE the middleware async context
@@ -1002,8 +1003,10 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         // Default: result is true (should not happen with onComplete, but just in case)
         return new Response(null, { status: 204 });
       } catch (error) {
-        // If handler or middleware threw HttpException, convert to Response
-        if (error instanceof HttpException) {
+        // Validation errors are HttpExceptions too, but the whole point of throwing
+        // them is to let the application reshape them - so they take the handler
+        // branch rather than being answered from getResponse() here
+        if (error instanceof HttpException && !isValidationError(error)) {
           return error.getResponse();
         }
 
@@ -1110,17 +1113,24 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
           if (hookResponse) return hookResponse;
         }
 
-        // Default error response
-        return new Response(
-          JSON.stringify({
-            error: 'Validation failed',
-            details: result.error.flatten(),
-          }),
-          {
-            status: 400,
-            headers: { 'Content-Type': 'application/json' },
-          },
-        );
+        // Reported through the application's error handler so validation shares the
+        // same response envelope as every other error. With no handler configured
+        // the thrown error would surface as a bare 500, so the adapter's own 400
+        // envelope stays as the fallback.
+        if (!this.errorHandler) {
+          return new Response(
+            JSON.stringify({
+              error: 'Validation failed',
+              details: flattenError(result.error),
+            }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            },
+          );
+        }
+
+        throw new ValidationError(result.error, key);
       }
     }
 
