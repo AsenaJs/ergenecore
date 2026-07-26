@@ -604,11 +604,14 @@ export class ServerConfig extends ConfigService {
 }
 
 // With custom exception mapper
+import { isValidationError } from '@asenajs/asena/adapter';
+
 export class ExceptionMapper {
   map(error: Error, context: Context): Response {
-    // Custom error mapping logic
-    if (error.name === 'ValidationError') {
-      return context.send({ error: 'Validation failed', details: error.message }, 400);
+    // Request validation failures arrive here like any other error.
+    // Check this before `instanceof HttpException` - ValidationError extends it
+    if (isValidationError(error)) {
+      return context.send({ error: 'Validation failed', details: error.issues }, 400);
     }
 
     return context.send({ error: 'Internal server error' }, 500);
