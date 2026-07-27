@@ -13,7 +13,12 @@ export class SSEStreamWriter extends StreamWriter implements AsenaSSEStreamWrite
       .join('\n');
 
     const sseData =
-      [message.event && `event: ${message.event}`, dataLines, message.id && `id: ${message.id}`, message.retry && `retry: ${message.retry}`]
+      [
+        message.event && `event: ${message.event}`,
+        dataLines,
+        message.id && `id: ${message.id}`,
+        message.retry && `retry: ${message.retry}`,
+      ]
         .filter(Boolean)
         .join('\n') + '\n\n';
 

@@ -54,6 +54,17 @@ export interface ErgenecoreOptions {
    * Only used if enableWebSocket is true
    */
   websocketAdapter?: ErgenecoreWebsocketAdapter;
+
+  /**
+   * Whether the adapter logs an error before handing it to the application's `onError`.
+   *
+   * 5xx logs at `error` with a stack, 4xx at `debug` (falling back to `info`) without one.
+   * Set `false` when your own handler already logs with a correlation id - otherwise every
+   * failure produces two uncorrelatable lines.
+   *
+   * @default true
+   */
+  logErrors?: boolean;
 }
 
 /**
@@ -86,7 +97,7 @@ export interface ErgenecoreOptions {
  * ```
  */
 export function createErgenecoreAdapter(options: ErgenecoreOptions = {}): Ergenecore {
-  const { port = 3000, hostname, logger, enableWebSocket = true, websocketAdapter } = options;
+  const { port = 3000, hostname, logger, enableWebSocket = true, websocketAdapter, logErrors = true } = options;
 
   // Create default logger if not provided
   const adapterLogger = logger || createDefaultLogger();
@@ -95,7 +106,7 @@ export function createErgenecoreAdapter(options: ErgenecoreOptions = {}): Ergene
   const wsAdapter = enableWebSocket ? websocketAdapter || new ErgenecoreWebsocketAdapter(adapterLogger) : undefined;
 
   // Create Ergenecore instance
-  const adapter = new Ergenecore(adapterLogger, wsAdapter);
+  const adapter = new Ergenecore(adapterLogger, wsAdapter, logErrors);
 
   // Configure port and hostname
   adapter.setPort(port);

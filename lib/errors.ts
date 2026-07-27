@@ -1,6 +1,12 @@
 import type { HttpStatusCode } from '@asenajs/asena/web-types';
-import { VALIDATION_ERROR, type ValidationErrorLike, type ValidationIssue } from '@asenajs/asena/adapter';
-import type { ZodError } from 'zod';
+import {
+  HTTP_EXCEPTION,
+  type HttpExceptionLike,
+  VALIDATION_ERROR,
+  type ValidationErrorLike,
+  type ValidationIssue,
+} from '@asenajs/asena/adapter';
+import { flattenError, type ZodError } from 'zod';
 
 /**
  * Extended ResponseInit with cause support
@@ -36,7 +42,13 @@ export interface HttpExceptionInit extends ResponseInit {
  * }
  * ```
  */
-export class HttpException extends Error {
+export class HttpException extends Error implements HttpExceptionLike {
+  /**
+   * Registered-symbol brand so `isHttpException()` works even when a project resolves two
+   * copies of this package - `instanceof` answers false across copies, silently.
+   */
+  public readonly [HTTP_EXCEPTION] = true as const;
+
   /**
    * HTTP status code
    */
@@ -156,6 +168,30 @@ export class ValidationError extends HttpException implements ValidationErrorLik
       message: issue.message,
       code: issue.code,
     }));
+  }
+
+  /**
+   * The envelope the caller sees when the application does not answer this failure itself.
+   *
+   * It lives here rather than in the adapter so a validation failure has exactly one response
+   * shape - the adapter used to build a richer body inline for applications with no `onError`
+   * and fall back to the bare `HttpException` text for everyone else, so the same failure
+   * answered two different bodies depending on an unrelated hook.
+   *
+   * Built on each call rather than stored: a `Response` body can only be read once.
+   */
+  public getResponse(): Response {
+    return new Response(
+      JSON.stringify({
+        error: 'Validation failed',
+        details: flattenError(this.cause),
+        target: this.target,
+      }),
+      {
+        status: this.status,
+        headers: { 'Content-Type': 'application/json' },
+      },
+    );
   }
 }
 

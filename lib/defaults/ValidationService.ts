@@ -33,5 +33,6 @@ import type { ValidationSchema, ValidationSchemaWithHook } from '../types';
  * Implements Asena's validation service interface with support for
  * Zod schemas and custom validation hooks.
  */
-export abstract class ValidationService
-  implements AsenaValidationService<ValidationSchema | ValidationSchemaWithHook> {}
+export abstract class ValidationService implements AsenaValidationService<
+  ValidationSchema | ValidationSchemaWithHook
+> {}

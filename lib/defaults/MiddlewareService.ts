@@ -33,9 +33,13 @@ export abstract class MiddlewareService implements AsenaMiddlewareService<Contex
   /**
    * Middleware handler
    *
+   * The return type mirrors Asena's `AsenaMiddlewareService` on purpose: the adapter
+   * awaits the result and stops the chain on a literal `false`, so a synchronous guard
+   * (`if (!token) return false;`) is a supported shape and must type-check.
+   *
    * @param context - Ergenecore context wrapper
    * @param next - Function to call next middleware or handler
-   * @returns Promise that resolves when middleware completes
+   * @returns `false` to stop the chain, anything else (or nothing) to continue
    */
-  public abstract handle(context: Context, next: () => Promise<void>): Promise<any>;
+  public abstract handle(context: Context, next: () => Promise<void>): Promise<void> | any;
 }

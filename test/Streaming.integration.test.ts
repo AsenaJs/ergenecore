@@ -14,7 +14,7 @@ const mockLogger: ServerLogger = {
 
 describe('Streaming Integration Tests', () => {
   let adapter: Ergenecore;
-  let server: Server;
+  let server: Server<any>;
   let baseUrl: string;
 
   beforeEach(() => {

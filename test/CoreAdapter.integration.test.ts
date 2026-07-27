@@ -16,7 +16,7 @@ const mockLogger: ServerLogger = {
 
 describe('CoreAdapter Integration Tests', () => {
   let adapter: Ergenecore;
-  let server: Server;
+  let server: Server<any>;
   let baseUrl: string;
 
   beforeEach(() => {
@@ -129,7 +129,8 @@ describe('CoreAdapter Integration Tests', () => {
         path: '/catch-all',
         middlewares: [],
         handler: async (ctx: Context) => {
-          return ctx.send({ method: ctx.request.method });
+          // `request` is private on ErgenecoreContextWrapper; `req` is the public accessor.
+          return ctx.send({ method: ctx.req.method });
         },
       });
 
@@ -490,7 +491,10 @@ describe('CoreAdapter Integration Tests', () => {
       const data = await response.json();
 
       expect(response.status).toBe(500);
-      expect(data.error).toBe('Test error message');
+      // The thrown message is deliberately NOT echoed: an unhandled 500 is by definition
+      // unanticipated, and its message routinely carries a connection string or a file path.
+      // It is written to the log with a stack instead.
+      expect(data.error).toBe('Internal Server Error');
     });
 
     it('should use custom error handler if provided', async () => {

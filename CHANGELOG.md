@@ -1,5 +1,128 @@
 # @asenajs/ergenecore
 
+## 2.0.0
+
+### Major Changes
+
+- A dedicated `onNotFound` hook, and every thrown error now reaches `onError` first
+
+  **Breaking: `onError` no longer sees unmatched routes.** They used to arrive as a synthetic
+  error, so an application handler had to ask "was this actually an error?" on every call. Routing
+  has its own hook now:
+
+  ```typescript
+  @Config()
+  export class AppConfig extends ConfigService {
+    public onNotFound(context: Context, request: NotFoundRequest) {
+      return context.send({ title: 'Not Found', status: 404, instance: request.path }, 404);
+    }
+  }
+  ```
+
+  `request.path` is the path only — no origin, no query string — and matches what the hono adapter
+  reports for the same request, so the same handler body works on either adapter. With no hook
+  declared the adapter answers `{"error":"Not Found"}` with a 404, unchanged. `NotFoundError` is
+  removed.
+
+  **Breaking: `HttpException` is now offered to `onError` before it answers itself.** Five catch
+  sites answered an `HttpException` straight from `getResponse()` and only consulted the
+  application handler for everything else, so an app could reshape its own 4xx envelopes on the
+  hono adapter but not here. All five now go through the handler first, falling back to
+  `getResponse()` (or a 500) when there is no handler, when it returns nothing, or when it throws.
+
+  Only one of those five carried the `!isValidationError` exemption, so a `ValidationError` thrown
+  on the fast path never reached `onError` at all — the exact opposite of why `ValidationError`
+  exists. The same change fixes that.
+
+  **Breaking: a validation failure now travels one path, whoever answers it.** The validator used to
+  answer its own `{"error":"Validation failed","details":…}` when the application had no `onError`,
+  and throw a `ValidationError` otherwise. So the same failing request was a logged 400 or an
+  invisible one depending on an unrelated hook, and the body differed too — an `onError` that
+  declined got `HttpException`'s bare `Validation failed` text instead of the envelope. The branch is
+  gone: the error is always thrown, and the envelope moved onto `ValidationError.getResponse()`, so
+  every route that does not answer it itself gets the same body. That body now also carries `target`
+  (`json`, `query`, `param`, `header`), which the hono adapter has always reported.
+
+  **A global middleware that throws on an unmatched path no longer escapes.** The catch-all was the
+  one request path with no `try`/`catch` around it, so an auth middleware raising `HttpException(401)`
+  on `/missing` — or `getBody()` rejecting a malformed payload — bypassed `onError`, wrote nothing,
+  and let Bun answer its own 500 page.
+
+  **A failed static file read no longer leaks its message.** `serveStaticFile` answered its own catch
+  with `{"error": error.message}`, and a message thrown out of `path.resolve` or `Bun.file` is
+  specifically a deployment path. It also never reached `onError`. It now goes through the same
+  handler as everything else.
+
+  **Breaking: the framework's default log now fires exactly when its default response fires.**
+
+  One rule, both adapters:
+
+  |          | the hook answered | no hook, or it declined or threw                         |
+  | -------- | ----------------- | -------------------------------------------------------- |
+  | response | yours             | the framework's                                          |
+  | log      | none              | 5xx `error` + stack · 4xx `debug` (→`info`) · 404 `info` |
+
+  Three things change. An application with **no** `onError` used to get a 500 that answered the
+  client and wrote nothing to stdout, stack included — it is logged now. An `onError` that returns
+  nothing, or throws, used to lose the original error entirely while the framework answered its
+  default — it is logged now. And an `onError` that **does** answer no longer produces a framework
+  line: your handler owns the response, so it owns the record, with whatever correlation id you
+  attach. There is no switch to force that line back on; `createErgenecoreAdapter({ logErrors: false })`
+  only silences further.
+
+  **An unmatched route is logged too**, at `info` — `Route not found:` with `{ path, method, status }`.
+  It produced no output at any level before, which is the one class of traffic (bots, probes, a typo
+  in a deployed client) an operator most needs to count. `info` rather than `warn` so a scanner
+  walking `/wp-admin`, `/.env` and `/phpmyadmin` cannot fill the warning stream, and rather than
+  `debug` because a 404 nobody can see is how a mistyped route survives to production. An
+  application that declared `onNotFound` and answered from it gets no line, same rule. `logErrors:
+false` silences this as well.
+
+  **A missing static file now reaches `onNotFound` too.** `@StaticServe` answered a hard-coded
+  `text/plain` 404 and never consulted the config hook, while the hono adapter's `serveStatic`
+  falls through to it — so the same application produced a different 404 body per adapter. Both
+  now answer the same envelope. The per-route `StaticServeService.onNotFound` still runs first.
+
+  **Breaking: the default 500 no longer echoes the thrown message.** With no `onError` registered
+  the body was `{"error": "<error.message>"}`, so an unhandled exception returned its internal text
+  to the caller — routinely a connection string, a file path or a driver's raw complaint — while the
+  hono adapter answered a generic body for the same application. It is now
+  `{"error": "Internal Server Error"}`. Nothing is lost: the message and stack are written to the log
+  by the change above, and an application that wants to say more declares `onError`.
+
+  **An unmatched route now records its status on the context.** `respondToUnmatched` returned a
+  `Response` without writing the status back, and an unmatched request never reaches a route handler,
+  so nothing else wrote it either. `@asenajs/asena-otel` reads `context.res.status` to attribute both
+  the span and the request metrics, so **every 404 was recorded with no `http.response.status_code`** —
+  precisely the traffic (bots, probes, mistyped paths) an operator most wants to count. The hono
+  adapter was already correct here.
+
+  **`HttpException` carries the `HTTP_EXCEPTION` brand** and is detectable with
+  `isHttpException()` from `@asenajs/asena/adapter`. `instanceof` answers false across two resolved
+  copies of a package, which turns every deliberate 401/403/404 into a generic 500 without a trace.
+  The brand is an instance field under a registered symbol, so unlike the hono adapter's
+  prototype-level brand it does survive across two copies of this package. Error _logging_ now uses
+  the same check: `logHandledError` still used `instanceof` while `respondToError` used the brand, so
+  a cross-copy 401 answered the client correctly while being logged at `error` level with a full
+  stack — the exact log flooding the 5xx/4xx split exists to prevent.
+
+  **Removed dead route-grouping code.** `extractCommonMiddlewares`, `groupRoutesByBasePath` and
+  `extractBasePath` computed a "common middleware" set that `createRouteHandler` discarded. The
+  comparison behind it was broken in the same way as the hono adapter's live copy — it compared
+  `mw.constructor.name`, and by the time a middleware reaches an adapter it is a plain object
+  literal, so every name was `"Object"`. Removed rather than repaired.
+
+  `MiddlewareService.handle` was typed to return `Promise<any>`. The adapter awaits the result and
+  stops the chain on a literal `false`, so a synchronous guard (`if (!token) return false;`) is a
+  supported shape that did not type-check. The return type now mirrors Asena's
+  `AsenaMiddlewareService`.
+
+  `ConfigService` declares its hooks (`onError`, `onNotFound`, `serveOptions`, `globalMiddlewares`,
+  `transport`) through declaration merging. They stay optional, but an override with the wrong
+  signature is now a compile error instead of a hook the framework silently never calls.
+
+  Requires `@asenajs/asena` 0.9.0 or later.
+
 ## 1.5.0
 
 ### Minor Changes

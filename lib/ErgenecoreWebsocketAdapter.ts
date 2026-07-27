@@ -240,14 +240,15 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
         return;
       }
 
-      let handler = websocket[type];
+      // Bound at the point it is read. Pulling a method off an object and binding it two
+      // statements later is the shape `unbound-method` exists to flag, and the gap is where a
+      // future edit loses `this`.
+      const handler = websocket[type]?.bind(websocket);
 
       if (!handler) {
         // Not all handlers are required, so this is not an error
         return;
       }
-
-      handler = handler.bind(websocket);
 
       try {
         await (handler as (socket: AsenaSocket<WebSocketData>, ...args: any[]) => void | Promise<void>)(
