@@ -34,7 +34,11 @@ export class StreamWriter implements AsenaStreamWriter {
       async pull(controller) {
         const { done, value } = await reader.read();
 
-        done ? controller.close() : controller.enqueue(value);
+        if (done) {
+          controller.close();
+        } else {
+          controller.enqueue(value);
+        }
       },
       cancel: () => {
         this.abort();
@@ -84,7 +88,9 @@ export class StreamWriter implements AsenaStreamWriter {
   public abort(): void {
     if (!this.aborted) {
       this.aborted = true;
-      this.abortSubscribers.forEach((subscriber) => subscriber());
+      // A subscriber may be async - `reader.cancel()` above is. `abort()` is called from a
+      // sync teardown path and cannot wait for them, so the promise is dropped deliberately.
+      this.abortSubscribers.forEach((subscriber) => void subscriber());
     }
   }
 }

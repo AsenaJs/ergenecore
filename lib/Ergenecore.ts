@@ -7,6 +7,8 @@ import {
   type BaseStaticServeParams,
   type BaseValidator,
   type ErrorHandler,
+  type NotFoundHandler,
+  isHttpException,
   type RouteParams,
   VALIDATOR_METHODS,
   type ValidatorHandler,
@@ -19,10 +21,8 @@ import type { Server } from 'bun';
 import * as Bun from 'bun';
 import * as path from 'path';
 import type { StaticServeExtras, ValidationSchema, ValidationSchemaWithHook } from './types';
-import { flattenError } from 'zod';
 import { HttpException, MiddlewareResponseError, ValidationError } from './errors';
 import { shouldApplyMiddleware } from '@asenajs/asena/utils';
-import { isValidationError } from '@asenajs/asena/adapter';
 
 /**
  * Static response headers for performance
@@ -85,6 +85,17 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
   private errorHandler?: ErrorHandler<Context>;
 
   /**
+   * Handler for requests that matched no route
+   */
+  private notFoundHandler?: NotFoundHandler<Context>;
+
+  /**
+   * Whether the adapter logs errors before handing them to the application.
+   * Set false when your own handler already logs with a correlation id.
+   */
+  private readonly logErrors: boolean = true;
+
+  /**
    * Global middlewares with route configuration
    * Structure: Array<{ middleware, config }>
    * Config is optional - if not provided, middleware applies to all routes
@@ -113,9 +124,11 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * @param logger - Server logger instance
    * @param websocketAdapter - WebSocket adapter instance (optional)
    */
-  public constructor(logger: ServerLogger, websocketAdapter?: ErgenecoreWebsocketAdapter) {
+  public constructor(logger: ServerLogger, websocketAdapter?: ErgenecoreWebsocketAdapter, logErrors = true) {
     // Call parent constructor with logger and websocketAdapter
     super(logger, websocketAdapter || new ErgenecoreWebsocketAdapter(logger));
+
+    this.logErrors = logErrors;
   }
 
   /**
@@ -349,6 +362,15 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
   }
 
   /**
+   * Registers the handler for requests that match no route.
+   *
+   * Separate from {@link onError}: a missing route is a routing outcome, not a thrown error.
+   */
+  public onNotFound(notFoundHandler: NotFoundHandler<Context>): void {
+    this.notFoundHandler = notFoundHandler;
+  }
+
+  /**
    * Sets serve options
    *
    * @param options - Serve options function
@@ -383,70 +405,61 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
   private buildBunRoutes(): Record<string, any> {
     const routes: Record<string, any> = {};
 
-    // Group routes by base path for optimization
-    const routeGroups = this.groupRoutesByBasePath(this.routeQueue);
+    // Group routes by exact path. There used to be an outer grouping by *base* path too, but
+    // its only product was a `commonMiddlewares` array that createRouteHandler ignored - and
+    // the comparison behind it was broken anyway (see the removed extractCommonMiddlewares in
+    // HonoAdapter, where the same code was live and swapped guards between sibling routes).
+    const routesByPath = new Map<string, RouteParams<Context, ValidationSchemaWithHook>[]>();
 
-    // Process each base path group
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    for (const [_, groupRoutes] of routeGroups) {
-      // Extract common middlewares for this group
-      const commonMiddlewares = this.extractCommonMiddlewares(groupRoutes);
-
-      // Group routes by exact path (same as before)
-      const routesByPath = new Map<string, RouteParams<Context, ValidationSchemaWithHook>[]>();
-
-      for (const route of groupRoutes) {
-        if (!routesByPath.has(route.path)) {
-          routesByPath.set(route.path, []);
-        }
-
-        routesByPath.get(route.path).push(route);
+    for (const route of this.routeQueue) {
+      if (!routesByPath.has(route.path)) {
+        routesByPath.set(route.path, []);
       }
 
-      // Build Bun router object for each path
-      for (const [path, pathRoutes] of routesByPath) {
-        // Normalize trailing slash to support both variants
-        // This ensures /users and /users/ both work with query params
-        const normalizedPath = path.endsWith('/') && path !== '/' ? path.slice(0, -1) : path;
-        const pathWithSlash = normalizedPath === '/' ? '/' : `${normalizedPath}/`;
+      routesByPath.get(route.path).push(route);
+    }
 
-        // Initialize both path variants (skip duplicate for root path)
-        routes[normalizedPath] = routes[normalizedPath] || {};
-        if (normalizedPath !== '/') {
-          routes[pathWithSlash] = routes[pathWithSlash] || {};
-        }
+    // Build Bun router object for each path
+    for (const [path, pathRoutes] of routesByPath) {
+      // Normalize trailing slash to support both variants
+      // This ensures /users and /users/ both work with query params
+      const normalizedPath = path.endsWith('/') && path !== '/' ? path.slice(0, -1) : path;
+      const pathWithSlash = normalizedPath === '/' ? '/' : `${normalizedPath}/`;
 
-        for (const route of pathRoutes) {
-          const method = route.method.toUpperCase();
+      // Initialize both path variants (skip duplicate for root path)
+      routes[normalizedPath] = routes[normalizedPath] || {};
+      if (normalizedPath !== '/') {
+        routes[pathWithSlash] = routes[pathWithSlash] || {};
+      }
 
-          // Fast Path Optimization with Pattern Matching
-          // ✅ Check if this route has any applicable global middlewares
-          const applicableGlobalMiddlewares = this.getGlobalMiddlewaresForPath(route.path);
+      for (const route of pathRoutes) {
+        const method = route.method.toUpperCase();
 
-          // Check if route is simple (no middleware, validation, or static serve)
-          const isSimpleRoute =
-            applicableGlobalMiddlewares.length === 0 &&
-            (!route.middlewares || route.middlewares.length === 0) &&
-            !route.validator &&
-            !route.staticServe;
+        // Fast Path Optimization with Pattern Matching
+        // ✅ Check if this route has any applicable global middlewares
+        const applicableGlobalMiddlewares = this.getGlobalMiddlewaresForPath(route.path);
 
-          // Create handler based on route complexity
-          const handler = isSimpleRoute
-            ? this.createFastPathHandler(route)
-            : this.createRouteHandler(route, commonMiddlewares);
+        // Check if route is simple (no middleware, validation, or static serve)
+        const isSimpleRoute =
+          applicableGlobalMiddlewares.length === 0 &&
+          (!route.middlewares || route.middlewares.length === 0) &&
+          !route.validator &&
+          !route.staticServe;
 
-          // Register handler to both path variants for trailing slash support
-          if (method === 'ALL') {
-            // Bun native: direct handler function matches all HTTP methods
-            routes[normalizedPath] = handler;
-            if (normalizedPath !== '/') {
-              routes[pathWithSlash] = handler;
-            }
-          } else {
-            routes[normalizedPath][method] = handler;
-            if (normalizedPath !== '/') {
-              routes[pathWithSlash][method] = handler;
-            }
+        // Create handler based on route complexity
+        const handler = isSimpleRoute ? this.createFastPathHandler(route) : this.createRouteHandler(route);
+
+        // Register handler to both path variants for trailing slash support
+        if (method === 'ALL') {
+          // Bun native: direct handler function matches all HTTP methods
+          routes[normalizedPath] = handler;
+          if (normalizedPath !== '/') {
+            routes[pathWithSlash] = handler;
+          }
+        } else {
+          routes[normalizedPath][method] = handler;
+          if (normalizedPath !== '/') {
+            routes[pathWithSlash][method] = handler;
           }
         }
       }
@@ -458,30 +471,39 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       const context = new ErgenecoreContextWrapper(req, this.server);
       const requestPath = new URL(req.url).pathname;
 
-      // Filter and run applicable global middlewares
-      const applicableMiddlewares = this.globalMiddlewares
-        .filter(({ config }) => shouldApplyMiddleware(requestPath, config))
-        .map(({ middleware }) => middleware);
+      // Wrapped like every other request path. Without this a global middleware throwing on an
+      // unmatched route - an auth middleware raising HttpException(401), or getBody() rejecting a
+      // malformed payload - escaped the handler entirely: onError never saw it, nothing was
+      // logged, and the caller got Bun's own 500 page instead of the adapter's envelope.
+      try {
+        // Filter and run applicable global middlewares
+        const applicableMiddlewares = this.globalMiddlewares
+          .filter(({ config }) => shouldApplyMiddleware(requestPath, config))
+          .map(({ middleware }) => middleware);
 
-      if (applicableMiddlewares.length > 0) {
-        const result = await this.executeMiddlewares(context, applicableMiddlewares);
+        if (applicableMiddlewares.length > 0) {
+          // The 404 is produced as the chain's *terminal step*, the same way a matched route runs
+          // its handler. Producing it after the chain had already unwound meant a global
+          // middleware's post-`next()` code observed the request before any status existed -
+          // `@asenajs/asena-otel` reads `context.res.status` there, so every unmatched route was
+          // recorded with no `http.response.status_code`.
+          const result = await this.executeMiddlewares(context, applicableMiddlewares, 0, () =>
+            this.respondToUnmatched(context, requestPath, req.method),
+          );
 
-        if (result instanceof Response) return result;
+          if (result instanceof Response) return result;
 
-        if (result === false) {
-          return new Response('Forbidden', { status: 403 });
+          if (result === false) {
+            return new Response('Forbidden', { status: 403 });
+          }
         }
-      }
 
-      // No middleware handled the request → error handler or 404
-      if (this.errorHandler) {
-        return this.errorHandler(new Error('Not Found'), context);
+        // Reached when no global middleware applies, or when one short-circuited without calling
+        // next(). The application's onNotFound, or the default 404.
+        return await this.respondToUnmatched(context, requestPath, req.method);
+      } catch (error) {
+        return await this.respondToError(error, context);
       }
-
-      return new Response(JSON.stringify({ error: 'Not Found' }), {
-        status: 404,
-        headers: STATIC_JSON_HEADERS,
-      });
     };
 
     return routes;
@@ -521,6 +543,160 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     }
 
     return routes;
+  }
+
+  /**
+   * Answers a request nothing served: an unmatched route, or a static file that does not exist.
+   *
+   * Both go through the application's `onNotFound` so an app has one place to shape its 404,
+   * and both fall back to the same JSON envelope the hono adapter uses.
+   *
+   * Deliberately NOT routed to `onError` - that hook is for errors the application threw.
+   */
+  private async respondToUnmatched(context: Context, path: string, method: string): Promise<Response> {
+    const response = await this.resolveUnmatchedResponse(context, path, method);
+
+    // Record the status on the context before answering. An unmatched request never reaches a
+    // route handler, so nothing else writes it - and `OtelTracingMiddleware` reads
+    // `context.res.status` to attribute both the span and the request metrics. Without this every
+    // 404 was recorded with no `http.response.status_code` at all, which is exactly the traffic
+    // (bots, probes, typo'd paths) an operator most wants to count.
+    context.res.status = response.status;
+
+    return response;
+  }
+
+  private async resolveUnmatchedResponse(context: Context, path: string, method: string): Promise<Response> {
+    if (this.notFoundHandler) {
+      try {
+        const response = await this.notFoundHandler(context, { path, method });
+
+        if (response instanceof Response) {
+          return response;
+        }
+      } catch (error) {
+        // onNotFound must not be able to take the server down.
+        this.logger.error('onNotFound threw an error, using the default response:', error);
+      }
+    }
+
+    this.logUnmatched(path, method);
+
+    return new Response(JSON.stringify({ error: 'Not Found' }), {
+      status: 404,
+      headers: STATIC_JSON_HEADERS,
+    });
+  }
+
+  /**
+   * Records a request the framework itself answered with a 404.
+   *
+   * Only reached when the application has no `onNotFound`, or when its hook declined or threw -
+   * an application that answered its own 404 already knows about the request. Without this an
+   * unmatched route was the one outcome that produced no output at any level, which is exactly
+   * the traffic (bots, probes, a typo in a deployed client) an operator needs to see.
+   *
+   * `info`, not `warn`: a scanner walking /wp-admin, /.env and /phpmyadmin must not be able to
+   * fill the warning stream. Not `debug` either - a 404 nobody can see is how a mistyped route
+   * survives to production.
+   */
+  private logUnmatched(path: string, method: string): void {
+    if (this.logErrors === false) return;
+
+    this.logger.info('Route not found:', { path, method, status: 404 });
+  }
+
+  /**
+   * Logs an error before the application's handler sees it, at a level that matches the
+   * response the caller will get.
+   *
+   * This adapter used to log only when NO error handler was registered - which is to say,
+   * never in a real application, since every app configures `onError`. A 500 answered
+   * nothing to stdout and the stack was gone. The level split mirrors the hono adapter:
+   * 5xx is ours to fix and gets a stack, 4xx is the caller's and would otherwise let a bot
+   * scanning for /wp-admin flood the error stream.
+   */
+  private logHandledError(error: unknown, context: Context): void {
+    if (this.logErrors === false) return;
+
+    // Brand check, not `instanceof` - `respondToError` below uses `isHttpException` to decide the
+    // *response*, and with two resolved copies of this package `instanceof` disagrees with it: the
+    // client would get a correct 401 while this line computed 500 and wrote an error-level entry
+    // with a full stack. That is precisely the log flooding the level split exists to prevent.
+    const status = isHttpException(error) ? error.status : 500;
+    const isServerError = status >= 500;
+
+    const meta = {
+      // A thrown non-Error is rare but legal, and `String(value)` on a plain object yields
+      // "[object Object]" - which tells an operator nothing. Serialise it instead.
+      message: error instanceof Error ? error.message : JSON.stringify(error),
+      path: new URL(context.req.url).pathname,
+      method: context.req.method,
+      status,
+      ...(isServerError && error instanceof Error ? { stack: error.stack } : {}),
+    };
+
+    if (isServerError) {
+      this.logger.error('Application error occurred:', meta);
+
+      return;
+    }
+
+    // `debug` is optional on ServerLogger - read it structurally and fall back to info.
+    const debug = (this.logger as { debug?: (message: string, meta?: unknown) => void }).debug;
+
+    (debug ?? this.logger.info).call(this.logger, 'Request rejected:', meta);
+  }
+
+  /**
+   * Produces the response for a thrown error, in the same order the hono adapter uses.
+   *
+   * The application's handler gets first refusal on *every* error, `HttpException` included.
+   * Previously each catch block answered an `HttpException` straight from `getResponse()` and
+   * only consulted `errorHandler` for everything else, so an app could not reshape its own
+   * 401/403/404 envelopes. Worse, only one of the five catch blocks carried the
+   * `!isValidationError` exemption, so a `ValidationError` thrown on the fast path never
+   * reached `onError` at all - the exact opposite of why ValidationError exists.
+   *
+   * Falls back to the exception's own response (or a 500) when there is no handler, when the
+   * handler returns nothing, or when the handler itself throws.
+   */
+  private async respondToError(error: unknown, context: Context): Promise<Response> {
+    if (this.errorHandler) {
+      try {
+        const response = await this.errorHandler(error as Error, context);
+
+        if (response instanceof Response) {
+          // The application answered. Its handler is where this error gets recorded, with
+          // whatever correlation id the application carries - a second line from here would
+          // only duplicate it.
+          return response;
+        }
+      } catch (handlerError) {
+        this.logger.error('Error handler threw an error, using the default response:', handlerError);
+      }
+    }
+
+    // Reached when there is no handler, when it declined, or when it threw - in every one of
+    // those the framework is answering, so it is the framework's job to say what happened.
+    // Without this, an `onError` that returns nothing swallows a 500 with no trace anywhere.
+    this.logHandledError(error, context);
+
+    // Branded check, not `instanceof`: with two resolved copies of this package `instanceof`
+    // answers false and every deliberate 401/403/404 would fall through to the generic 500
+    // below - silently, because the API still responds.
+    if (isHttpException(error)) {
+      return (error as HttpException).getResponse();
+    }
+
+    // Never echo the thrown message. An unhandled 500 is by definition something the application
+    // did not anticipate, and its message routinely carries a connection string, a file path or a
+    // driver's raw complaint. The message is not lost - `logHandledError` above wrote it with a
+    // stack. An application that wants to say more declares `onError`.
+    return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+      status: 500,
+      headers: STATIC_JSON_HEADERS,
+    });
   }
 
   /**
@@ -611,10 +787,9 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       // Middleware called next() and completed successfully
       return true;
     } catch (error) {
-      // If middleware threw HttpException, convert to Response
-      if (error instanceof HttpException) {
-        return error.getResponse();
-      }
+      // HttpException is deliberately NOT answered here. Converting it to a Response inside the
+      // middleware chain short-circuits the application's error handler; rethrowing lets the
+      // caller's terminal catch run it through respondToError like every other error.
 
       // If a downstream middleware returned a Response, propagate it
       if (error instanceof MiddlewareResponseError) {
@@ -660,10 +835,11 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     const applicableGlobalMiddlewares = this.getGlobalMiddlewaresForPath(wsRoute.path);
 
     return async (req: Request): Promise<Response | undefined> => {
-      try {
-        // Create context wrapper
-        const context = new ErgenecoreContextWrapper(req, this.server);
+      // Built outside the try so the catch can hand it to the application's error handler,
+      // the same way createRouteHandler does.
+      const context = new ErgenecoreContextWrapper(req, this.server);
 
+      try {
         // Execute filtered global middlewares with real next() chain
         if (applicableGlobalMiddlewares.length > 0) {
           const result = await this.executeMiddlewares(context, applicableGlobalMiddlewares);
@@ -711,23 +887,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         // Upgrade failed
         return new Response('WebSocket upgrade failed', { status: 500 });
       } catch (error) {
-        // If HttpException was thrown, convert to Response
-        if (error instanceof HttpException) {
-          return error.getResponse();
-        }
-
-        // Log and handle other errors
-        this.logger.error('WebSocket upgrade handler error:', error);
-
-        return new Response(
-          JSON.stringify({
-            error: error instanceof Error ? error.message : 'WebSocket upgrade failed',
-          }),
-          {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' },
-          },
-        );
+        return await this.respondToError(error, context);
       }
     };
   }
@@ -819,61 +979,10 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * @returns Bun-compatible fast path handler
    */
   private createFastPathHandler(route: RouteParams<Context, ValidationSchemaWithHook>) {
-    // If no error handler is set, use ultra-minimal version with default error handling
-    if (!this.errorHandler) {
-      return async (req: Request): Promise<Response> => {
-        const context = new ErgenecoreContextWrapper(req, this.server);
-
-        context.routePattern = route.path;
-
-        try {
-          // Inject Bun's native route params if present
-          // @ts-expect-error - Bun adds params to Request
-          if (req.params) {
-            // @ts-expect-error - Bun adds params to Request
-            const params = req.params;
-
-            for (const key in params) {
-              context.setValue(`param:${key}`, params[key]);
-            }
-          }
-
-          // Execute handler directly
-          const response = await route.handler(context);
-
-          // Return response (check if already a Response object)
-          if (response instanceof Response) {
-            return response;
-          }
-
-          // Wrap in Response with static headers
-          return new Response(JSON.stringify(response), {
-            status: 200,
-            headers: STATIC_JSON_HEADERS,
-          });
-        } catch (error) {
-          // If handler threw HttpException, convert to Response
-          if (error instanceof HttpException) {
-            return error.getResponse();
-          }
-
-          // Default error handling when no custom error handler is registered
-          this.logger.error('Route handler error:', error);
-
-          return new Response(
-            JSON.stringify({
-              error: error instanceof Error ? error.message : 'Internal Server Error',
-            }),
-            {
-              status: 500,
-              headers: STATIC_JSON_HEADERS,
-            },
-          );
-        }
-      };
-    }
-
-    // With error handler (minimal try-catch)
+    // Deliberately one closure. There used to be a second, picked here by `if (!this.errorHandler)`
+    // - and once both were routed through `respondToError` the two bodies were identical. It was
+    // also the only place the adapter read `errorHandler` at *build* time rather than per request,
+    // so a handler registered after start() would have selected the wrong closure.
     return async (req: Request): Promise<Response> => {
       const context = new ErgenecoreContextWrapper(req, this.server);
 
@@ -905,13 +1014,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
           headers: STATIC_JSON_HEADERS,
         });
       } catch (error) {
-        // If handler threw HttpException, convert to Response
-        if (error instanceof HttpException) {
-          return error.getResponse();
-        }
-
-        // Handle other errors with custom error handler
-        return this.errorHandler(error as Error, context);
+        return await this.respondToError(error, context);
       }
     };
   }
@@ -926,13 +1029,9 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * - Error handling
    *
    * @param route - Route parameters
-   * @param _commonMiddlewares - Common middlewares for this route group (for future optimization)
    * @returns Bun-compatible route handler
    */
-  private createRouteHandler(
-    route: RouteParams<Context, ValidationSchemaWithHook>,
-    _commonMiddlewares: BaseMiddleware<Context>[] = [],
-  ) {
+  private createRouteHandler(route: RouteParams<Context, ValidationSchemaWithHook>) {
     // ✅ Filter global middlewares by path pattern (ONCE during route building)
     // This happens at server startup, NOT on every request → zero runtime overhead
     const applicableGlobalMiddlewares = this.getGlobalMiddlewaresForPath(route.path);
@@ -1003,31 +1102,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         // Default: result is true (should not happen with onComplete, but just in case)
         return new Response(null, { status: 204 });
       } catch (error) {
-        // Validation errors are HttpExceptions too, but the whole point of throwing
-        // them is to let the application reshape them - so they take the handler
-        // branch rather than being answered from getResponse() here
-        if (error instanceof HttpException && !isValidationError(error)) {
-          return error.getResponse();
-        }
-
-        // Handle other errors with custom error handler if available
-        if (this.errorHandler) {
-          // Pass the original context with params already injected
-          return this.errorHandler(error as Error, context);
-        }
-
-        // Default error response
-        this.logger.error('Route handler error:', error);
-
-        return new Response(
-          JSON.stringify({
-            error: error instanceof Error ? error.message : 'Internal Server Error',
-          }),
-          {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' },
-          },
-        );
+        // The context here already has params injected, so pass it through unchanged.
+        return await this.respondToError(error, context);
       }
     };
   }
@@ -1113,23 +1189,12 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
           if (hookResponse) return hookResponse;
         }
 
-        // Reported through the application's error handler so validation shares the
-        // same response envelope as every other error. With no handler configured
-        // the thrown error would surface as a bare 500, so the adapter's own 400
-        // envelope stays as the fallback.
-        if (!this.errorHandler) {
-          return new Response(
-            JSON.stringify({
-              error: 'Validation failed',
-              details: flattenError(result.error),
-            }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json' },
-            },
-          );
-        }
-
+        // Reported through the application's error handler so validation shares the same
+        // response envelope as every other error. The adapter used to answer its own 400 here
+        // when no handler was configured, which meant a validation failure was the one 4xx
+        // that reached neither `onError` nor the log. The envelope did not disappear with that
+        // branch - it moved onto `ValidationError.getResponse()`, which `respondToError`
+        // falls back to.
         throw new ValidationError(result.error, key);
       }
     }
@@ -1224,108 +1289,104 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     context: Context,
     staticServe: BaseStaticServeParams<Context, StaticServeExtras>,
   ): Promise<Response | null> {
-    try {
-      // 1. Extract request path from URL
-      const url = new URL(req.url);
-      const requestPath = decodeURIComponent(url.pathname); // Decode URL encoding
+    // Deliberately no try/catch. Anything thrown here - a rewriteRequestPath that raises, a
+    // path.resolve or Bun.file failure - travels up to createRouteHandler's catch and through
+    // `respondToError`, like every other failure. Answering it here meant the body was
+    // `{"error": error.message}`, and a message thrown out of the filesystem layer is
+    // specifically a deployment path; and the application's `onError` never saw it at all.
 
-      // 2. Apply path rewriting if provided
-      const rewrittenPath = staticServe.rewriteRequestPath ? staticServe.rewriteRequestPath(requestPath) : requestPath;
+    // 1. Extract request path from URL
+    const url = new URL(req.url);
+    const requestPath = decodeURIComponent(url.pathname); // Decode URL encoding
 
-      // 3. Build absolute file path
-      const filePath = path.join(staticServe.root, rewrittenPath);
+    // 2. Apply path rewriting if provided
+    const rewrittenPath = staticServe.rewriteRequestPath ? staticServe.rewriteRequestPath(requestPath) : requestPath;
 
-      // 4. Security: Resolve and validate path to prevent traversal attacks
-      // Resolve both paths to absolute canonical paths
-      const resolvedFilePath = path.resolve(filePath);
-      const resolvedRoot = path.resolve(staticServe.root);
+    // 3. Build absolute file path
+    const filePath = path.join(staticServe.root, rewrittenPath);
 
-      // Check if resolved file path is within root directory
-      if (!resolvedFilePath.startsWith(resolvedRoot)) {
-        this.logger.warn(`Path traversal attempt detected: ${requestPath} -> ${resolvedFilePath}`);
-        return new Response('Forbidden', { status: 403 });
-      }
+    // 4. Security: Resolve and validate path to prevent traversal attacks
+    // Resolve both paths to absolute canonical paths
+    const resolvedFilePath = path.resolve(filePath);
+    const resolvedRoot = path.resolve(staticServe.root);
 
-      // 5. Create Bun.file() instance
-      const file = Bun.file(resolvedFilePath);
+    // Check if resolved file path is within root directory
+    if (!resolvedFilePath.startsWith(resolvedRoot)) {
+      this.logger.warn(`Path traversal attempt detected: ${requestPath} -> ${resolvedFilePath}`);
+      return new Response('Forbidden', { status: 403 });
+    }
 
-      // 5. Check if file exists
-      const fileExists = await file.exists();
+    // 5. Create Bun.file() instance
+    const file = Bun.file(resolvedFilePath);
 
-      // 6. File not found → trigger onNotFound hook
-      if (!fileExists) {
-        if (staticServe.onNotFound) {
-          await staticServe.onNotFound.handler(rewrittenPath, context);
+    // 5. Check if file exists
+    const fileExists = await file.exists();
 
-          // If hook overrides, return null (let handler continue)
-          if (staticServe.onNotFound.override) {
-            return null;
-          }
-        }
-
-        // Default 404 response
-        return new Response('Not Found', { status: 404 });
-      }
-
-      // 7. File found → trigger onFound hook
-      if (staticServe.onFound) {
-        await staticServe.onFound.handler(rewrittenPath, context);
+    // 6. File not found → trigger onNotFound hook
+    if (!fileExists) {
+      if (staticServe.onNotFound) {
+        await staticServe.onNotFound.handler(rewrittenPath, context);
 
         // If hook overrides, return null (let handler continue)
-        if (staticServe.onFound.override) {
+        if (staticServe.onNotFound.override) {
           return null;
         }
       }
 
-      // 8. Create Bun file response with automatic Content-Type detection
-      const fileResponse = new Response(file);
-
-      // 9. Build response headers starting with Bun's Content-Type
-      const finalHeaders = new Headers(fileResponse.headers);
-
-      // 10. Add cache validation headers (ETag and Last-Modified)
-      // ETag format: W/"<size>-<lastModified>" (weak validator)
-      const etag = `W/"${file.size}-${file.lastModified}"`;
-
-      finalHeaders.set('ETag', etag);
-
-      // Last-Modified: HTTP date format (RFC 7231)
-      const lastModified = new Date(file.lastModified).toUTCString();
-
-      finalHeaders.set('Last-Modified', lastModified);
-
-      // 11. Add custom headers (can override defaults)
-      const customHeaders = this.buildStaticFileHeaders(resolvedFilePath, staticServe.extra);
-
-      for (const [key, value] of Object.entries(customHeaders)) {
-        finalHeaders.set(key, value);
-      }
-
-      // 12. Add default Cache-Control if not provided
-      // Using 'public, max-age=0' allows caching but requires revalidation
-      if (!finalHeaders.has('Cache-Control')) {
-        finalHeaders.set('Cache-Control', 'public, max-age=0');
-      }
-
-      // 13. Return response with all headers
-      // This preserves Bun's zero-copy file serving while adding cache headers
-      return new Response(fileResponse.body, {
-        status: fileResponse.status,
-        headers: finalHeaders,
-      });
-    } catch (error) {
-      this.logger.error('Static file serving error:', error);
-
-      return new Response(
-        JSON.stringify({
-          error: error instanceof Error ? error.message : 'Static file serving failed',
-        }),
-        {
-          status: 500,
-          headers: { 'Content-Type': 'application/json' },
-        },
-      );
+      // No hook, or a hook that did not take over: fall through to the application's
+      // onNotFound, exactly as an unmatched route does. This used to answer a hard-coded
+      // `text/plain` 404 and never consult the config hook - so the same app produced a
+      // different 404 body here than on the hono adapter, where serveStatic calls next()
+      // and the request lands in app.notFound.
+      return await this.respondToUnmatched(context, new URL(req.url).pathname, req.method);
     }
+
+    // 7. File found → trigger onFound hook
+    if (staticServe.onFound) {
+      await staticServe.onFound.handler(rewrittenPath, context);
+
+      // If hook overrides, return null (let handler continue)
+      if (staticServe.onFound.override) {
+        return null;
+      }
+    }
+
+    // 8. Create Bun file response with automatic Content-Type detection
+    const fileResponse = new Response(file);
+
+    // 9. Build response headers starting with Bun's Content-Type
+    const finalHeaders = new Headers(fileResponse.headers);
+
+    // 10. Add cache validation headers (ETag and Last-Modified)
+    // ETag format: W/"<size>-<lastModified>" (weak validator)
+    const etag = `W/"${file.size}-${file.lastModified}"`;
+
+    finalHeaders.set('ETag', etag);
+
+    // Last-Modified: HTTP date format (RFC 7231)
+    const lastModified = new Date(file.lastModified).toUTCString();
+
+    finalHeaders.set('Last-Modified', lastModified);
+
+    // 11. Add custom headers (can override defaults)
+    const customHeaders = this.buildStaticFileHeaders(resolvedFilePath, staticServe.extra);
+
+    for (const [key, value] of Object.entries(customHeaders)) {
+      finalHeaders.set(key, value);
+    }
+
+    // 12. Add default Cache-Control if not provided
+    // Using 'public, max-age=0' allows caching but requires revalidation
+    if (!finalHeaders.has('Cache-Control')) {
+      finalHeaders.set('Cache-Control', 'public, max-age=0');
+    }
+
+    // 13. Return response with all headers
+    // This preserves Bun's zero-copy file serving while adding cache headers
+    return new Response(fileResponse.body, {
+      status: fileResponse.status,
+      headers: finalHeaders,
+    });
   }
 
   /**
@@ -1382,125 +1443,6 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     }
 
     return headers;
-  }
-
-  /**
-   * Extracts base path from a route path
-   *
-   * Removes dynamic segments (parameters and wildcards) from the path
-   * to find the static base path for grouping routes.
-   *
-   * @param path - Route path (e.g., "/api/users/:id")
-   * @returns Base path without dynamic segments (e.g., "/api/users")
-   *
-   * @example
-   * ```typescript
-   * extractBasePath('/api/users/:id') // => '/api/users'
-   * extractBasePath('/api/users/:id/posts/:postId') // => '/api/users'
-   * extractBasePath('/static/*') // => '/static'
-   * extractBasePath('/') // => '/'
-   * ```
-   */
-  private extractBasePath(path: string): string {
-    // Remove trailing slash (except for root)
-    const normalized = path.endsWith('/') && path !== '/' ? path.slice(0, -1) : path;
-
-    // Split path into segments
-    const segments = normalized.split('/');
-    const baseSegments = [];
-
-    // Keep segments until we hit a parameter or wildcard
-    for (const segment of segments) {
-      // Stop if segment is a parameter (:param) or wildcard (*)
-      if (segment.startsWith(':') || segment.includes('*')) {
-        break;
-      }
-
-      baseSegments.push(segment);
-    }
-
-    // Join back into path, handle root case
-    return baseSegments.join('/') || '/';
-  }
-
-  /**
-   * Extracts common middlewares across multiple routes
-   *
-   * Identifies middlewares that are present in ALL routes and can be
-   * moved to group level for optimization.
-   *
-   * @param routes - Array of routes to analyze
-   * @returns Array of common middleware instances
-   *
-   * @example
-   * ```typescript
-   * extractCommonMiddlewares([
-   *   { middlewares: [auth, log, rate] },
-   *   { middlewares: [auth, log] },
-   *   { middlewares: [auth, log] }
-   * ]) // => [auth, log]
-   * ```
-   */
-  private extractCommonMiddlewares(
-    routes: RouteParams<Context, ValidationSchemaWithHook>[],
-  ): BaseMiddleware<Context>[] {
-    // Need at least 2 routes to have common middlewares
-    if (routes.length === 0 || routes.length === 1) {
-      return [];
-    }
-
-    // Get middlewares from first route as baseline
-    const firstRouteMiddlewares = routes[0].middlewares || [];
-
-    // Filter to only middlewares present in ALL routes
-    return firstRouteMiddlewares.filter((middleware) => {
-      return routes.every((route) => {
-        return (route.middlewares || []).some((mw) => {
-          // Compare by constructor name (class identity)
-          return mw.constructor.name === middleware.constructor.name;
-        });
-      });
-    });
-  }
-
-  /**
-   * Groups routes by their base path
-   *
-   * Creates a map of base paths to routes for optimization.
-   * Routes with the same base path will share common middlewares.
-   *
-   * @param routes - Array of routes to group
-   * @returns Map of base paths to route arrays
-   *
-   * @example
-   * ```typescript
-   * groupRoutesByBasePath([
-   *   { path: '/api/users' },
-   *   { path: '/api/users/:id' },
-   *   { path: '/api/posts' }
-   * ])
-   * // => Map {
-   * //   '/api/users' => [route1, route2],
-   * //   '/api/posts' => [route3]
-   * // }
-   * ```
-   */
-  private groupRoutesByBasePath(
-    routes: RouteParams<Context, ValidationSchemaWithHook>[],
-  ): Map<string, RouteParams<Context, ValidationSchemaWithHook>[]> {
-    const groups = new Map<string, RouteParams<Context, ValidationSchemaWithHook>[]>();
-
-    for (const route of routes) {
-      const basePath = this.extractBasePath(route.path);
-
-      if (!groups.has(basePath)) {
-        groups.set(basePath, []);
-      }
-
-      groups.get(basePath).push(route);
-    }
-
-    return groups;
   }
 
   public get hostname() {

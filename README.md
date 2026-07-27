@@ -1,5 +1,8 @@
 # Asena Ergenecore Adapter
 
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://asena.sh)
+[![Bun Version](https://img.shields.io/badge/Bun-1.3.12%2B-blueviolet)](https://bun.sh)
+
 **Blazing-fast** native Bun adapter for [Asena.js](https://github.com/asenajs/asena) - Built exclusively with Bun's native APIs for maximum performance.
 
 Built on Bun runtime for exceptional performance:

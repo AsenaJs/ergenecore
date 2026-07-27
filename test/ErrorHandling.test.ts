@@ -134,7 +134,10 @@ describe('Error Handling', () => {
       const data = await response.json();
 
       expect(response.status).toBe(500);
-      expect(data.error).toBe('Unhandled error');
+      // The thrown message is deliberately NOT echoed: an unhandled 500 is by definition
+      // unanticipated, and its message routinely carries a connection string or a file path.
+      // It is written to the log with a stack instead.
+      expect(data.error).toBe('Internal Server Error');
     });
 
     it('should allow error handler to return custom status codes', async () => {
@@ -368,7 +371,7 @@ describe('Error Handling', () => {
       expect(mockLogger.error).toHaveBeenCalled();
     });
 
-    it('should not log errors when custom handler handles them', async () => {
+    it('does not log a 5xx a custom handler answered itself', async () => {
       (mockLogger.error as any).mockClear();
 
       const errorHandler = (_error: Error, _ctx: Context) => {
@@ -395,7 +398,10 @@ describe('Error Handling', () => {
 
       await fetch(`http://localhost:${adapter['server'].port}/handled-error`);
 
-      // Custom handler should handle it, no logger.error call
+      // The framework's default log fires exactly when its default *response* does. An
+      // application whose handler answered has already recorded the failure, with whatever
+      // correlation id it carries; a second line from the adapter would only duplicate it.
+      // What it does NOT get away with is answering nothing - see errorLogging.test.ts.
       expect(mockLogger.error).not.toHaveBeenCalled();
     });
   });

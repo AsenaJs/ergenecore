@@ -1,5 +1,12 @@
 import type { Server } from 'bun';
-import type { AsenaContext, AsenaSSEStreamWriter, AsenaStreamWriter, AsenaVariables, CookieExtra, SendOptions } from '@asenajs/asena/adapter';
+import type {
+  AsenaContext,
+  AsenaSSEStreamWriter,
+  AsenaStreamWriter,
+  AsenaVariables,
+  CookieExtra,
+  SendOptions,
+} from '@asenajs/asena/adapter';
 import { HttpException } from './errors';
 import { SSEStreamWriter } from './stream';
 import { StreamWriter } from './stream';
@@ -554,7 +561,10 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
     cb: (stream: T) => Promise<void>,
     onError?: (error: Error, stream: T) => Promise<void>,
   ): void {
-    (async () => {
+    // `void`: the promise is deliberately not awaited - this method returns as soon as the stream
+    // is handed over, and every failure inside is handled below. Marking it explicit is what
+    // separates fire-and-forget from a forgotten await.
+    void (async () => {
       try {
         await cb(stream);
       } catch (e) {

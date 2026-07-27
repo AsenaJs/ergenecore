@@ -41,3 +41,5 @@ Claude
 /.claude/
 
 junit.xml
+# Local release tooling - deliberately not committed before 1.0
+scripts/

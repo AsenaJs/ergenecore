@@ -18,7 +18,7 @@ const mockLogger: ServerLogger = {
 
 describe('Validation System', () => {
   let adapter: Ergenecore;
-  let server: Server;
+  let server: Server<any>;
   let baseUrl: string;
 
   beforeEach(() => {
@@ -810,11 +810,128 @@ describe('Validation System', () => {
       const response = await postInvalid();
 
       expect(response.status).toBe(400);
+      expect(response.headers.get('content-type')).toContain('application/json');
 
       const data = await response.json();
 
       expect(data.error).toBe('Validation failed');
       expect(data.details.fieldErrors.email).toBeDefined();
+      // Matches what the hono adapter has always reported, so the same client can read either
+      expect(data.target).toBe('json');
+    });
+
+    it('should log the failure when no error handler is configured', async () => {
+      (mockLogger.info as any).mockClear();
+
+      registerSignup();
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      await postInvalid();
+
+      // The adapter used to answer this 400 from inside the validator, so it reached neither
+      // `onError` nor the log - the one 4xx an application could not see at any level. It now
+      // travels the same path as every other error. (`mockLogger` has no `debug`, so the 4xx
+      // level falls back to `info`; assert on the message, not the method.)
+      const logged = (mockLogger.info as any).mock.calls.find((call: unknown[]) =>
+        String(call[0]).includes('Request rejected'),
+      );
+
+      expect(logged).toBeDefined();
+      expect(logged[1].status).toBe(400);
+      expect(logged[1].path).toBe('/signup');
+    });
+
+    it('should answer the same envelope when the error handler declines', async () => {
+      // Before the envelope moved onto `ValidationError.getResponse()`, this fell back to
+      // `HttpException`'s bare `Validation failed` text - so the body depended on whether an
+      // unrelated hook existed, which is exactly what the single path removed.
+      adapter.onError((() => undefined) as any);
+
+      registerSignup();
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const response = await postInvalid();
+
+      expect(response.status).toBe(400);
+
+      const data = await response.json();
+
+      expect(data.error).toBe('Validation failed');
+      expect(data.details.fieldErrors.email).toBeDefined();
+      expect(data.target).toBe('json');
+    });
+
+    // The regression the changeset names but nothing covered: of the five catch sites, only the
+    // one behind `createRouteHandler` carried the `!isValidationError` exemption. Every test
+    // above registers a `validator`, which makes `isSimpleRoute` false and routes through that
+    // one - so a ValidationError thrown on the *fast* path (no validator, no middlewares, no
+    // static serve) never reached `onError` and no test could see it.
+    it('should route a ValidationError thrown on the fast path to the error handler', async () => {
+      let seen: Error | undefined;
+
+      adapter.onError((error, ctx) => {
+        seen = error;
+
+        if (isValidationError(error)) {
+          return ctx.send({ success: false, target: error.target }, 400);
+        }
+
+        return ctx.send({ success: false }, 500);
+      });
+
+      adapter.registerRoute({
+        staticServe: undefined,
+        validator: undefined,
+        method: HttpMethod.POST,
+        path: '/fast-path-signup',
+        // Empty on purpose: this is what puts the route on the fast path.
+        middlewares: [],
+        handler: async () => {
+          throw new ValidationError(
+            z.object({ email: z.string().email() }).safeParse({ email: 'nope' }).error!,
+            'json',
+          );
+        },
+      });
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const response = await fetch(`${baseUrl}/fast-path-signup`, { method: 'POST' });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ success: false, target: 'json' });
+      expect(seen).toBeInstanceOf(ValidationError);
+    });
+
+    // The other half of the same change: the app handler now gets first refusal on an
+    // HttpException too, rather than each catch site answering straight from getResponse().
+    it('should offer an HttpException thrown on the fast path to the error handler first', async () => {
+      adapter.onError((error, ctx) => ctx.send({ reshaped: true, status: (error as HttpException).status }, 418));
+
+      adapter.registerRoute({
+        staticServe: undefined,
+        validator: undefined,
+        method: HttpMethod.GET,
+        path: '/fast-path-denied',
+        middlewares: [],
+        handler: async () => {
+          throw new HttpException(401, 'Unauthorized');
+        },
+      });
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const response = await fetch(`${baseUrl}/fast-path-denied`);
+
+      // Not 401: the point is that the application got to reshape its own 4xx envelope.
+      expect(response.status).toBe(418);
+      expect(await response.json()).toEqual({ reshaped: true, status: 401 });
     });
   });
 });

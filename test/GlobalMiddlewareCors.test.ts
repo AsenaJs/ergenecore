@@ -467,15 +467,17 @@ describe('Global Middleware - CORS Preflight Integration (Ergenecore)', () => {
       expect(body.custom).toBe('response');
     });
 
-    it('should call error handler when no middleware handles on catch-all', async () => {
-      const errorHandler = mock((error: Error, ctx: Context) => {
-        return new Response(JSON.stringify({ error: error.message, custom: true }), {
+    it('should call onNotFound when no middleware handles on catch-all', async () => {
+      // Used to assert this reached onError, back when an unmatched route was modelled as a
+      // thrown NotFoundError. Routing now has its own hook and onError only sees real throws.
+      const notFoundHandler = mock((_ctx: Context, request: { path: string; method: string }) => {
+        return new Response(JSON.stringify({ path: request.path, custom: true }), {
           status: 404,
           headers: { 'Content-Type': 'application/json' },
         });
       });
 
-      adapter.onError(errorHandler);
+      adapter.onNotFound(notFoundHandler);
 
       adapter.registerRoute({
         staticServe: undefined,
@@ -494,7 +496,8 @@ describe('Global Middleware - CORS Preflight Integration (Ergenecore)', () => {
 
       expect(response.status).toBe(404);
       expect(body.custom).toBe(true);
-      expect(errorHandler).toHaveBeenCalled();
+      expect(body.path).toBe('/unknown');
+      expect(notFoundHandler).toHaveBeenCalled();
     });
   });
 });

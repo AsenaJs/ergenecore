@@ -40,7 +40,7 @@ function createTestMiddleware(name: string, shouldContinue = true): BaseMiddlewa
 
 describe('Global Middleware Pattern-Based Filtering', () => {
   let adapter: Ergenecore;
-  let server: Server;
+  let server: Server<any>;
   let baseUrl: string;
 
   beforeEach(() => {

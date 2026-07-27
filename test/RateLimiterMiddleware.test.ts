@@ -23,7 +23,7 @@ const sleep = (ms: number) =>
 
 describe('Rate Limiter Middleware', () => {
   let adapter: Ergenecore;
-  let server: Server;
+  let server: Server<any>;
   let baseUrl: string;
 
   beforeEach(() => {

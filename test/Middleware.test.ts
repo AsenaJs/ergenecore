@@ -40,7 +40,7 @@ function createTestMiddleware(name: string, shouldContinue = true): BaseMiddlewa
 
 describe('Middleware System', () => {
   let adapter: Ergenecore;
-  let server: Server;
+  let server: Server<any>;
   let baseUrl: string;
 
   beforeEach(() => {
@@ -365,7 +365,10 @@ describe('Middleware System', () => {
       expect(response.status).toBe(500);
       const data = await response.json();
 
-      expect(data.error).toBe('Middleware error');
+      // The thrown message is deliberately NOT echoed: an unhandled 500 is by definition
+      // unanticipated, and its message routinely carries a connection string or a file path.
+      // It is written to the log with a stack instead.
+      expect(data.error).toBe('Internal Server Error');
     });
   });
 
