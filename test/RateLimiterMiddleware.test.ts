@@ -4,6 +4,7 @@ import { ErgenecoreWebsocketAdapter } from '../lib';
 import { RateLimiterMiddleware } from '../lib/defaults';
 import type { ServerLogger } from '@asenajs/asena/logger';
 import { HttpMethod } from '@asenajs/asena/web-types';
+import { Container } from '@asenajs/asena/container';
 import type { Context } from '../lib';
 import type { Server } from 'bun';
 
@@ -690,6 +691,104 @@ describe('Rate Limiter Middleware', () => {
 
       expect(successes).toBe(5);
       expect(failures).toBe(5);
+    });
+  });
+
+  describe('Shutdown (@OnStop)', () => {
+    it('should expose destroy() as an @OnStop hook the container can find', () => {
+      // The metadata is what makes LifecycleService run destroy() during server.stop(). Reading
+      // it through the real Container is the only assertion that proves the wiring, rather than
+      // proving that a decorator was typed onto the class.
+      expect(new Container().getStopHooks(RateLimiterMiddleware)).toContain('destroy');
+    });
+
+    it('should hand the hook down to subclasses', () => {
+      // The documented way to use this middleware is to extend it, so a hook the subclass does
+      // not inherit is a hook that never runs in a real application.
+      class ApiRateLimiter extends RateLimiterMiddleware {}
+
+      expect(new Container().getStopHooks(ApiRateLimiter)).toContain('destroy');
+    });
+
+    it('should stop the cleanup interval, not merely drop its buckets', async () => {
+      const rateLimiter = new RateLimiterMiddleware({
+        capacity: 10,
+        refillRate: 10,
+        cleanupInterval: 20,
+        bucketTTL: 0, // Every bucket is stale the moment the sweep looks at it
+      });
+
+      adapter.registerRoute({
+        staticServe: undefined,
+        validator: undefined,
+        method: HttpMethod.GET,
+        path: '/test',
+        // @ts-ignore
+        middlewares: [rateLimiter],
+        handler: async (ctx: Context) => {
+          return ctx.send({ message: 'Success' });
+        },
+      });
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const ip = '1.2.3.4';
+
+      await fetch(`${baseUrl}/test`, { headers: { 'X-Forwarded-For': ip } });
+
+      // The sweep is running: the bucket the request created is gone
+      await sleep(60);
+      expect(rateLimiter.getBucketState(ip)).toBeUndefined();
+
+      rateLimiter.destroy();
+
+      // The timer is unref()'d, so nothing about the process exiting proves it stopped. A bucket
+      // that survives a full cleanup period is what proves clearInterval actually ran - this is
+      // the leak an in-process restart accumulates, one live interval per generation.
+      await fetch(`${baseUrl}/test`, { headers: { 'X-Forwarded-For': ip } });
+      await sleep(60);
+
+      expect(rateLimiter.getBucketState(ip)).toBeDefined();
+    });
+
+    it('should drop every bucket and stay callable a second time', async () => {
+      const rateLimiter = new RateLimiterMiddleware({
+        capacity: 10,
+        refillRate: 10,
+        cleanupInterval: 0,
+      });
+
+      adapter.registerRoute({
+        staticServe: undefined,
+        validator: undefined,
+        method: HttpMethod.GET,
+        path: '/test',
+        // @ts-ignore
+        middlewares: [rateLimiter],
+        handler: async (ctx: Context) => {
+          return ctx.send({ message: 'Success' });
+        },
+      });
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      await fetch(`${baseUrl}/test`, { headers: { 'X-Forwarded-For': '1.2.3.4' } });
+      await fetch(`${baseUrl}/test`, { headers: { 'X-Forwarded-For': '5.6.7.8' } });
+
+      expect(rateLimiter.getBucketState('1.2.3.4')).toBeDefined();
+      expect(rateLimiter.getBucketState('5.6.7.8')).toBeDefined();
+
+      rateLimiter.destroy();
+
+      // One Map entry per client that ever called, held for the lifetime of the process
+      expect(rateLimiter.getBucketState('1.2.3.4')).toBeUndefined();
+      expect(rateLimiter.getBucketState('5.6.7.8')).toBeUndefined();
+
+      // A stop hook that throws is logged and skipped, so a second stop() must find nothing left
+      // to do rather than fail on a handle that was already cleared.
+      expect(() => rateLimiter.destroy()).not.toThrow();
     });
   });
 });

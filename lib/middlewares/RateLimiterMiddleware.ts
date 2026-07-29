@@ -49,6 +49,7 @@
 
 import type { Context } from '../ErgenecoreContextWrapper';
 import { MiddlewareService } from '../defaults';
+import { OnStop } from '@asenajs/asena/decorators/ioc';
 
 /**
  * Token bucket for a single client
@@ -397,14 +398,27 @@ export class RateLimiterMiddleware extends MiddlewareService {
   }
 
   /**
-   * Cleanup resources (stop cleanup timer)
+   * Cleanup resources (stop cleanup timer, drop every bucket)
    *
-   * Call this when shutting down the application.
+   * Wired to `@OnStop`, so `server.stop()` releases it without the application having to
+   * remember. The timer is `unref()`'d and will not hold the process open, but nothing about
+   * unref makes it *stop*: across an in-process restart - the twenty stop/start cycles a test
+   * suite performs, a watch-mode reload - each generation of the middleware left behind a live
+   * interval and a bucket Map still holding one entry per client that ever called.
+   *
+   * Inherited by subclasses: the hook is collected across the prototype chain, so a
+   * `class ApiRateLimiter extends RateLimiterMiddleware` is released without redeclaring it.
+   *
+   * Idempotent - the handle is dropped, so a second stop() finds nothing to clear.
    */
+  @OnStop()
   public destroy(): void {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
+      this.cleanupTimer = undefined;
     }
+
+    this.buckets.clear();
   }
 
   /**

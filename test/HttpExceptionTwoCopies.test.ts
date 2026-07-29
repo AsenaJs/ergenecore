@@ -1,8 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { cpSync, mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { Ergenecore } from '../lib';
 import { HttpException } from '../lib/errors';
+import { HTTP_EXCEPTION } from '@asenajs/asena/adapter';
 import { HttpMethod } from '@asenajs/asena/web-types';
 import type { ServerLogger } from '@asenajs/asena/logger';
 
@@ -42,12 +43,17 @@ const capturingLogger = () => {
  *
  * A hand-built object carrying the brand cannot show this: it is not an instance of *anything*,
  * so `instanceof` was always going to answer false for it, and a test built on one would pass
- * against a `logHandledError` that had never been fixed for a real subclass. So this copies
- * `lib/errors.ts` to a second location on disk and imports it as its own module. The file's only
- * imports are `@asenajs/asena/*` and a `zod` type, so it resolves from inside the package
- * unchanged, and `Symbol.for('asena.httpException')` is the same symbol in both copies while the
- * two `HttpException` classes are not the same class. That is the production topology, produced
- * the way production produces it.
+ * against a `logHandledError` that had never been fixed for a real subclass. So this copies the
+ * module that *defines* the class to a second location on disk and imports it as its own module.
+ *
+ * That module used to be this package's `lib/errors.ts`. `HttpException` now lives in
+ * `@asenajs/asena/adapter` and `lib/errors.ts` only re-exports it, so copying `errors.ts` would
+ * produce a second module resolving to the *same* class and every assertion below would silently
+ * stop testing anything. Copy the built core module instead - it has no imports at all after
+ * `import type` erasure, and it declares `Symbol.for('asena.httpException')` in-file, so the copy
+ * is a genuinely distinct class carrying an identical registered symbol. That models production
+ * more closely than the old version did, where symbol identity came from a shared import rather
+ * than from `Symbol.for`.
  */
 describe('HttpException from a second resolved copy of the package', () => {
   const copyDir = join(import.meta.dir, '.two-copies-fixture');
@@ -58,11 +64,21 @@ describe('HttpException from a second resolved copy of the package', () => {
   beforeAll(async () => {
     rmSync(copyDir, { recursive: true, force: true });
     mkdirSync(copyDir, { recursive: true });
-    cpSync(join(import.meta.dir, '..', 'lib', 'errors.ts'), join(copyDir, 'errors.ts'));
 
-    const foreign = await import(join(copyDir, 'errors.ts'));
+    // Resolve rather than hard-code: `@asenajs/asena` is installed as a real package here, not
+    // symlinked, so its path is an implementation detail of whatever installed it.
+    const coreAdapterEntry = Bun.resolveSync('@asenajs/asena/adapter', import.meta.dir);
+
+    cpSync(join(dirname(coreAdapterEntry), 'types', 'HttpException.js'), join(copyDir, 'HttpException.js'));
+
+    const foreign = await import(join(copyDir, 'HttpException.js'));
 
     ForeignHttpException = foreign.HttpException;
+
+    // If the core module ever grows a runtime import, the copy would resolve that import back to
+    // the shared module and stop being a second copy in the way that matters. Pin the one property
+    // the whole scheme rests on: same registered symbol, different class.
+    expect(foreign.HTTP_EXCEPTION).toBe(HTTP_EXCEPTION);
   });
 
   afterAll(() => {
@@ -161,5 +177,30 @@ describe('HttpException from a second resolved copy of the package', () => {
 
     expect(response.status).toBe(500);
     expect(entries.find((e) => e.message === 'Application error occurred:')?.level).toBe('error');
+  });
+
+  // `HttpExceptionLike` guarantees `status` and nothing else - `getResponse` is optional, because
+  // the hono adapter brands a class it does not own and a foreign exception type may carry neither
+  // the method nor a body. `respondToError` used to call it unconditionally, so such an exception
+  // threw a TypeError from *inside* the error path. There is no handler above that: `Bun.serve` is
+  // configured with no `error` hook, so the request fell through to Bun's own 500 page and the
+  // original failure was never logged.
+  test('a branded exception with no getResponse() answers its status instead of crashing', async () => {
+    const brandedOnly: unknown = Object.assign(Object.create(Error.prototype), {
+      [HTTP_EXCEPTION]: true,
+      status: 429,
+      message: 'slow down',
+    });
+
+    const { response, entries } = await bootThrowing(brandedOnly);
+
+    expect(response.status).toBe(429);
+
+    // The status is in the contract, the body is not. Echoing an unrecognised exception's message
+    // is how the leakage this adapter was hardened against gets back in.
+    expect(await response.json()).toEqual({ error: 'Internal Server Error' });
+
+    expect(entries.some((entry) => entry.level === 'error')).toBe(false);
+    expect(entries.find((e) => e.message === 'Request rejected:')?.meta.status).toBe(429);
   });
 });

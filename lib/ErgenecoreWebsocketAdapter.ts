@@ -100,6 +100,17 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
     // Clear connection tracking
     this.activeConnections.clear();
 
+    // Release the transport. Both hooks are optional on the contract - BunLocalTransport declares
+    // neither, because server.publish() owns nothing that has to be given back - but a remote
+    // transport holds a subscriber connection with a live channel subscription plus a publisher
+    // connection, and destroy() had no call site anywhere in the framework. A pod that restarts
+    // in-process (a test suite, a watch-mode reload) therefore leaked two broker connections per
+    // cycle until the broker refused new ones.
+    //
+    // Last, after the HTTP surface is already down: a close handler running during the drain may
+    // still broadcast, and publish() on a destroyed transport is a null dereference.
+    await this.transport?.destroy?.();
+
     this.logger.info('WebSocket shutdown complete');
   }
 
