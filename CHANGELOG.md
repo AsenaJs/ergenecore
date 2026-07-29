@@ -34,13 +34,33 @@
   it - `Bun.serve` is configured with no `error` hook, so the request fell through to Bun's own 500
   page and the original failure was never logged.
 
+- `stop()` now releases the WebSocket layer, and the core peer moves to `^0.10.0`
+
+  `Ergenecore.stop()` stopped the Bun server and nothing else. It never called
+  `websocketAdapter.shutdown()`, so the heartbeat `setInterval` behind every open socket survived
+  the shutdown — and `shutdown()` itself never called `transport.destroy?.()`, which the core
+  documents as "called during server shutdown" and which had **zero call sites anywhere in the
+  framework**. In a multi-pod setup that meant `RedisTransport` leaked a subscriber connection with
+  a live channel subscription, plus a publisher, on every stop.
+
+  The socket closes first and the WebSocket teardown runs in a `finally` with its own guard, so a
+  failure on either side cannot strand the other — and `AsenaServer` awaits `adapter.stop()`
+  without a guard of its own, so an error escaping here would take the component stop hooks and the
+  microservice transports down with it.
+
+  `RateLimiterMiddleware.destroy()` now carries `@OnStop`, so `server.stop()` clears its cleanup
+  interval and bucket map. The interval was `unref()`'d and never held the process open, but it
+  survived a stop/start cycle *inside* one process — twenty of them is an ordinary test suite.
+
+  Requires `@asenajs/asena@^0.10.0`, which is where `@OnStop` comes from.
+
 ### Minor Changes
 
 - `HttpException` moves to core; this package re-exports it
 
   `HttpException` and `HttpExceptionInit` are now declared in `@asenajs/asena/adapter` so the hono
   adapter can offer the _same class_ rather than a look-alike with a different constructor. Requires
-  `@asenajs/asena` `>=0.9.2`; the peer range moves to `^0.9.2`.
+  `@asenajs/asena` `>=0.9.2`; the peer range moves to `^0.10.0` with the entry above.
 
   `import { HttpException } from '@asenajs/ergenecore'` keeps working and is a re-export, not a
   subclass or a copy - the class object is the one core exports, so `instanceof` holds across both
