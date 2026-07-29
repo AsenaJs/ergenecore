@@ -1,6 +1,6 @@
 # Asena Ergenecore Adapter
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://asena.sh)
+[![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)](https://asena.sh)
 [![Bun Version](https://img.shields.io/badge/Bun-1.3.12%2B-blueviolet)](https://bun.sh)
 
 **Blazing-fast** native Bun adapter for [Asena.js](https://github.com/asenajs/asena) - Built exclusively with Bun's native APIs for maximum performance.
@@ -20,7 +20,7 @@ Built on Bun runtime for exceptional performance:
 
 ## Features
 
-- ⚡ **Zero Dependencies** - Pure Bun native APIs (except Zod for validation)
+- ⚡ **Zero Dependencies** - no runtime dependencies at all; Zod is a peer your project owns
 - 🚀 **SIMD-Accelerated** - Native Bun router with SIMD-optimized matching
 - 🔌 **Full Adapter Support** - HTTP, WebSocket, Middleware, Validation
 - 📦 **Zero-Copy File Serving** - Bun.file() for optimal static file performance
@@ -34,19 +34,30 @@ Ergenecore is the **fastest** Asena adapter because it:
 - Uses Bun's **native HTTP server** (`Bun.serve()`)
 - Leverages **SIMD-accelerated routing** (no framework overhead)
 - Implements **zero-copy** file serving with `Bun.file()`
-- Has **no external dependencies** (except Zod)
+- Has **no runtime dependencies at all** (Zod is a peer your project owns)
 - Is optimized for **Bun runtime** exclusively
 
 ## Requirements
 
 - [Bun](https://bun.sh) v1.3.12 or higher
+- [@asenajs/asena](https://github.com/AsenaJs/Asena) v0.10.0 or higher (peer dependency)
+- [Zod](https://zod.dev) v4.3.6 or higher (peer dependency)
 - TypeScript v5.8.2 or higher
 
 ## Installation
 
 ```bash
-bun add @asenajs/ergenecore
+bun add @asenajs/ergenecore zod
 ```
+
+`zod` is a **peer dependency** - the adapter defines the validation contract, your project owns the
+library and its version.
+
+| Package manager | Command |
+|:--|:--|
+| bun, npm 7+, pnpm 8+ | `bun add zod` — peers auto-install, but declare them anyway so they survive a clean install |
+| yarn 1 | `yarn add zod` — **required**, yarn 1 does not install peers for you |
+
 
 ## Quick Start
 
@@ -612,7 +623,8 @@ import { isValidationError } from '@asenajs/asena/adapter';
 export class ExceptionMapper {
   map(error: Error, context: Context): Response {
     // Request validation failures arrive here like any other error.
-    // Check this before `instanceof HttpException` - ValidationError extends it
+    // Check this before the generic `isHttpException()` branch - a ValidationError is an
+    // HTTP exception too, so the generic branch would otherwise swallow it
     if (isValidationError(error)) {
       return context.send({ error: 'Validation failed', details: error.issues }, 400);
     }
@@ -638,7 +650,7 @@ Contributions are welcome! Please follow these guidelines:
 
 1. Follow the **TDD approach** (write tests first)
 2. Maintain **90%+ test coverage**
-3. Use **Bun native APIs** only (no external dependencies except Zod)
+3. Use **Bun native APIs** only (no runtime dependencies; Zod is a peer)
 4. Follow the **CLAUDE.md** guidelines
 
 ## License

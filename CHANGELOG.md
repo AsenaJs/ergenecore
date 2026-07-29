@@ -1,5 +1,80 @@
 # @asenajs/ergenecore
 
+## 3.0.0
+
+### Major Changes
+
+- `zod` is now a peer dependency - this package has no runtime dependencies at all
+
+  `ValidationSchema` is `z.ZodType`, exported from this package's public types, and the schema you
+  return from `json()` is constructed with _your_ `z`. That makes zod part of the contract rather than
+  an implementation detail, and a contract type must not come from a copy the caller cannot see. The
+  adapter defines how validation is wired; it does not get to pick which zod your application runs.
+
+  It also removes the last entry from `dependencies`. Ergenecore is now genuinely zero-dependency,
+  which is what its documentation has claimed all along.
+
+  ## Migration
+
+  ```bash
+  bun add zod
+  ```
+
+  | Package manager      | What you need to do                                                                                 |
+  | :------------------- | :-------------------------------------------------------------------------------------------------- |
+  | bun, npm 7+, pnpm 8+ | Peers auto-install, but declare it anyway - an undeclared peer disappears on the next clean install |
+  | yarn 1               | **Required.** yarn 1 does not install peers                                                         |
+
+  Requires **zod ^4.3.6**. `flattenError`, used to build the validation-failure envelope, is a
+  zod-v4 top-level export and is called at runtime, so zod 3 will not work.
+
+  Also hardened in this release: `respondToError` called `getResponse()` on anything carrying the
+  `HTTP_EXCEPTION` brand, but the brand only guarantees `status`. A foreign exception implementing the
+  contract without that method threw a `TypeError` from inside the error path, where nothing can catch
+  it - `Bun.serve` is configured with no `error` hook, so the request fell through to Bun's own 500
+  page and the original failure was never logged.
+
+- `stop()` now releases the WebSocket layer, and the core peer moves to `^0.10.0`
+
+  `Ergenecore.stop()` stopped the Bun server and nothing else. It never called
+  `websocketAdapter.shutdown()`, so the heartbeat `setInterval` behind every open socket survived
+  the shutdown — and `shutdown()` itself never called `transport.destroy?.()`, which the core
+  documents as "called during server shutdown" and which had **zero call sites anywhere in the
+  framework**. In a multi-pod setup that meant `RedisTransport` leaked a subscriber connection with
+  a live channel subscription, plus a publisher, on every stop.
+
+  The socket closes first and the WebSocket teardown runs in a `finally` with its own guard, so a
+  failure on either side cannot strand the other — and `AsenaServer` awaits `adapter.stop()`
+  without a guard of its own, so an error escaping here would take the component stop hooks and the
+  microservice transports down with it.
+
+  `RateLimiterMiddleware.destroy()` now carries `@OnStop`, so `server.stop()` clears its cleanup
+  interval and bucket map. The interval was `unref()`'d and never held the process open, but it
+  survived a stop/start cycle *inside* one process — twenty of them is an ordinary test suite.
+
+  Requires `@asenajs/asena@^0.10.0`, which is where `@OnStop` comes from.
+
+### Minor Changes
+
+- `HttpException` moves to core; this package re-exports it
+
+  `HttpException` and `HttpExceptionInit` are now declared in `@asenajs/asena/adapter` so the hono
+  adapter can offer the _same class_ rather than a look-alike with a different constructor. Requires
+  `@asenajs/asena` `>=0.9.2`; the peer range moves to `^0.10.0` with the entry above.
+
+  `import { HttpException } from '@asenajs/ergenecore'` keeps working and is a re-export, not a
+  subclass or a copy - the class object is the one core exports, so `instanceof` holds across both
+  import paths and `ValidationError extends HttpException` is unchanged. Nothing an application
+  wrote needs to change. Prefer `@asenajs/asena/adapter` in new code, since that is the import that
+  is identical on both adapters.
+
+  Also hardened: `respondToError` called `getResponse()` on anything carrying the brand. The brand
+  only ever guaranteed `status` - `getResponse` is optional on `HttpExceptionLike` - so a foreign
+  exception implementing the contract threw a `TypeError` from inside the error path. There is no
+  handler above that point and `Bun.serve` is configured without an `error` hook, so the request
+  fell through to Bun's own 500 page and the original failure was never logged. It now checks for
+  the method and otherwise answers from `status` alone, withholding the body.
+
 ## 2.0.0
 
 ### Major Changes

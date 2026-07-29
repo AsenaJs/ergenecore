@@ -1,7 +1,5 @@
-import type { HttpStatusCode } from '@asenajs/asena/web-types';
 import {
-  HTTP_EXCEPTION,
-  type HttpExceptionLike,
+  HttpException,
   VALIDATION_ERROR,
   type ValidationErrorLike,
   type ValidationIssue,
@@ -9,130 +7,26 @@ import {
 import { flattenError, type ZodError } from 'zod';
 
 /**
- * Extended ResponseInit with cause support
+ * The exception applications throw, re-exported so `@asenajs/ergenecore` keeps offering it under
+ * the name it always had.
+ *
+ * It used to be defined here. It now lives in `@asenajs/asena/adapter` so the hono adapter can
+ * offer the *same class* rather than a look-alike - one `throw new HttpException(...)` that
+ * compiles and behaves identically on both. This is a re-export, not a subclass: the class object
+ * is the one core exports, so `instanceof` holds across the two import paths.
  */
-export interface HttpExceptionInit extends ResponseInit {
-  /** The original error that caused this exception */
-  cause?: Error;
-}
-
-/**
- * HTTP Exception for Ergenecore
- *
- * Public API for throwing HTTP errors in handlers and middlewares.
- * Inspired by Hono's HTTPException pattern.
- *
- * @example
- * ```typescript
- * // In middleware
- * if (!user) {
- *   throw new HttpException(401, 'Unauthorized', {
- *     headers: { 'WWW-Authenticate': 'Bearer' }
- *   });
- * }
- *
- * // In handler
- * if (!isValid) {
- *   throw new HttpException(400, { error: 'Invalid data' });
- * }
- *
- * // With cause
- * try { await db.query(...) } catch (err) {
- *   throw new HttpException(500, 'Database Error', { cause: err });
- * }
- * ```
- */
-export class HttpException extends Error implements HttpExceptionLike {
-  /**
-   * Registered-symbol brand so `isHttpException()` works even when a project resolves two
-   * copies of this package - `instanceof` answers false across copies, silently.
-   */
-  public readonly [HTTP_EXCEPTION] = true as const;
-
-  /**
-   * HTTP status code
-   */
-  public readonly status: number;
-
-  /**
-   * Response body (can be string or object)
-   */
-  public readonly body: string | object;
-
-  /**
-   * Optional response init options (headers, statusText, cause, etc.)
-   */
-  public readonly options?: HttpExceptionInit;
-
-  /**
-   * Creates a new HttpException
-   *
-   * @param status - HTTP status code (e.g., 401, 403, 404) or HttpStatusCode enum value
-   * @param body - Response body (string or object to be JSON stringified)
-   * @param options - Optional HttpExceptionInit options (headers, statusText, cause, etc.)
-   *
-   * @example
-   * ```typescript
-   * // Simple message
-   * throw new HttpException(404, 'Not Found');
-   *
-   * // With HttpStatusCode enum
-   * throw new HttpException(ClientErrorStatusCode.NotFound, 'Not Found');
-   *
-   * // JSON object
-   * throw new HttpException(400, { error: 'Invalid input', field: 'email' });
-   *
-   * // With headers
-   * throw new HttpException(429, 'Too Many Requests', {
-   *   headers: { 'Retry-After': '60' }
-   * });
-   *
-   * // With cause
-   * throw new HttpException(500, 'Internal Error', { cause: originalError });
-   * ```
-   */
-  public constructor(status: HttpStatusCode | number, body: string | object = '', options?: HttpExceptionInit) {
-    const message = typeof body === 'string' ? body : JSON.stringify(body);
-
-    super(message, options?.cause ? { cause: options.cause } : undefined);
-    this.name = 'HttpException';
-    this.status = status;
-    this.body = body;
-    this.options = options;
-  }
-
-  /**
-   * Converts the exception to a Response object
-   *
-   * @returns Bun Response object ready to be returned
-   */
-  public getResponse(): Response {
-    const body = typeof this.body === 'string' ? this.body : JSON.stringify(this.body);
-
-    const headers = new Headers(this.options?.headers);
-
-    // Set Content-Type to application/json if body is an object and not already set
-    if (typeof this.body === 'object' && !headers.has('Content-Type')) {
-      headers.set('Content-Type', 'application/json');
-    }
-
-    return new Response(body, {
-      status: this.status,
-      statusText: this.options?.statusText,
-      headers,
-    });
-  }
-}
+export { HttpException, type HttpExceptionInit } from '@asenajs/asena/adapter';
 
 /**
  * Thrown when request validation fails, so the failure reaches the application's
  * `ConfigService.onError` like every other error instead of being answered inside
  * the validation step.
  *
- * Extends `HttpException` with status 400 deliberately: an existing handler that
- * branches on `error instanceof HttpException` and replies with `error.status`
- * keeps answering 400, so adopting this does not silently turn validation failures
- * into 500s.
+ * Extends `HttpException` with status 400 deliberately: a handler that matches with
+ * `isHttpException()` and replies with `error.status` keeps answering 400, so adopting
+ * this does not silently turn validation failures into 500s. Check `isValidationError()`
+ * first if you want validation failures to get their own envelope - this is an
+ * `HttpException`, so the generic branch would otherwise swallow it.
  *
  * @example
  * ```typescript

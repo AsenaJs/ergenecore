@@ -21,7 +21,7 @@ import type { Server } from 'bun';
 import * as Bun from 'bun';
 import * as path from 'path';
 import type { StaticServeExtras, ValidationSchema, ValidationSchemaWithHook } from './types';
-import { HttpException, MiddlewareResponseError, ValidationError } from './errors';
+import { MiddlewareResponseError, ValidationError } from './errors';
 import { shouldApplyMiddleware } from '@asenajs/asena/utils';
 
 /**
@@ -343,12 +343,33 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
   /**
    * Stops the server
    *
+   * The HTTP socket closes first and the WebSocket layer second - the reverse of the order
+   * start() brought them up, since the transport is initialised *after* Bun.serve(). A close
+   * handler running during the drain may still broadcast, so the transport has to outlive the
+   * sockets that use it.
+   *
    * @param closeActiveConnections - Whether to close active connections
    */
   public async stop(closeActiveConnections = true): Promise<void> {
-    if (this.server) {
-      await this.server.stop(closeActiveConnections);
-      this.logger.info('Server stopped');
+    try {
+      if (this.server) {
+        await this.server.stop(closeActiveConnections);
+        this.logger.info('Server stopped');
+      }
+    } finally {
+      // In a `finally`, and swallowed: `AsenaServer.runStop()` awaits this call unguarded, so an
+      // error escaping here would strand everything queued behind it - the components' @OnStop
+      // hooks, the microservice transports, ulak. A WebSocket layer that cannot let go of a
+      // broker connection is worth a log line, not a shutdown that stops halfway. And a socket
+      // that refuses to close must not be able to keep the transport open either.
+      try {
+        // The cast is the constructor's guarantee: `websocketAdapter` is declared on the base as
+        // `AsenaWebsocketAdapter`, which has no shutdown() of its own, but Ergenecore only ever
+        // accepts - or defaults to - an ErgenecoreWebsocketAdapter.
+        await (this.websocketAdapter as ErgenecoreWebsocketAdapter).shutdown();
+      } catch (error) {
+        this.logger.error('WebSocket shutdown failed, continuing with shutdown:', error);
+      }
     }
   }
 
@@ -686,7 +707,23 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     // answers false and every deliberate 401/403/404 would fall through to the generic 500
     // below - silently, because the API still responds.
     if (isHttpException(error)) {
-      return (error as HttpException).getResponse();
+      // `getResponse` is optional on the contract - the brand guarantees `status` and nothing
+      // more, so a foreign exception type that carries only the brand is legal. Calling it
+      // unconditionally turned such an exception into a TypeError thrown from inside the error
+      // path, which is the one place an application cannot recover from.
+      if (typeof error.getResponse === 'function') {
+        return error.getResponse();
+      }
+
+      // Answer from what the contract does guarantee, and nothing more. An exception that reaches
+      // here is by definition one this adapter does not understand, so its message is not known to
+      // be safe to echo - the same reasoning as the generic 500 below. The status is honoured
+      // because that part *is* in the contract, and collapsing a deliberate 429 to a 500 is the
+      // failure the brand exists to prevent.
+      return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+        status: error.status,
+        headers: STATIC_JSON_HEADERS,
+      });
     }
 
     // Never echo the thrown message. An unhandled 500 is by definition something the application

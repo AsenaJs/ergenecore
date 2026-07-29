@@ -281,4 +281,49 @@ describe('Ergenecore error logging', () => {
       expect(calls.some((call) => call.message.includes('Route not found'))).toBe(false);
     });
   });
+
+  // The twin of the same block in `hono-adapter/test/coreHttpException.test.ts`. It is stated as
+  // an invariant rather than a list of expected statuses because the failure mode is *divergence*:
+  // the hono adapter used to pick the response with `instanceof` and the log level with a separate
+  // duck-type on `.status`, so one request could be answered 500 and recorded as a 4xx. This
+  // adapter has always used the brand for both; asserting the equality here is what stops a future
+  // change from introducing the split that had to be fixed there.
+  describe('the logged status always equals the answered status', () => {
+    const cases: [string, unknown, string][] = [
+      ['HttpException 401', new HttpException(401, 'Unauthorized'), 'Request rejected:'],
+      ['HttpException 503', new HttpException(503, 'Upstream down'), 'Application error occurred:'],
+      ['plain Error', new Error('kaboom'), 'Application error occurred:'],
+      // A plain Error is not branded, so its stray `.status` must not be believed - the client is
+      // answered 500 and the record has to say 500 too.
+      [
+        'plain Error with a stray .status',
+        Object.assign(new Error('kaboom'), { status: 401 }),
+        'Application error occurred:',
+      ],
+    ];
+
+    for (const [name, error, expectedMessage] of cases) {
+      test(name, async () => {
+        const { logger, calls } = createLogger();
+        const adapter = new Ergenecore(logger);
+
+        adapter.setPort(0);
+        adapter.registerRoute({
+          method: HttpMethod.GET,
+          path: '/thrown',
+          middlewares: [],
+          handler: async () => {
+            throw error;
+          },
+        } as any);
+
+        server = await adapter.start();
+
+        const response = await fetch(`http://localhost:${server.port}/thrown`);
+        const logged = calls.find((call) => call.message === expectedMessage);
+
+        expect(logged?.meta.status).toBe(response.status);
+      });
+    }
+  });
 });
