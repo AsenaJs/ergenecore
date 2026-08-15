@@ -1217,23 +1217,36 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       // Run Zod validation
       const result = schema.safeParse(data);
 
-      // If validation fails
-      if (!result.success) {
-        // Use custom hook if provided
-        if (hook) {
-          const hookResponse = await hook(result, context);
-
-          if (hookResponse) return hookResponse;
+      if (result.success) {
+        // Hand the parsed value back to the context so getBody() returns what the schema
+        // describes. Without this the output was computed and thrown away: z.object() strips
+        // unknown keys rather than rejecting them, and the handler still received them, which
+        // made every `updateById({ ...body })` behind a validator a mass-assignment sink.
+        //
+        // Body only. query/param/header validation still runs, but their coerced output is not
+        // written back - getQuery() and friends read the request directly and have no cache to
+        // swap. Documented in Website/docs/concepts/validation.md.
+        if (key === 'json' || key === 'body') {
+          context.setValidatedBody(result.data);
         }
 
-        // Reported through the application's error handler so validation shares the same
-        // response envelope as every other error. The adapter used to answer its own 400 here
-        // when no handler was configured, which meant a validation failure was the one 4xx
-        // that reached neither `onError` nor the log. The envelope did not disappear with that
-        // branch - it moved onto `ValidationError.getResponse()`, which `respondToError`
-        // falls back to.
-        throw new ValidationError(result.error, key);
+        continue;
       }
+
+      // Validation failed - use custom hook if provided
+      if (hook) {
+        const hookResponse = await hook(result, context);
+
+        if (hookResponse) return hookResponse;
+      }
+
+      // Reported through the application's error handler so validation shares the same
+      // response envelope as every other error. The adapter used to answer its own 400 here
+      // when no handler was configured, which meant a validation failure was the one 4xx
+      // that reached neither `onError` nor the log. The envelope did not disappear with that
+      // branch - it moved onto `ValidationError.getResponse()`, which `respondToError`
+      // falls back to.
+      throw new ValidationError(result.error, key);
     }
 
     // All validations passed

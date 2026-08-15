@@ -169,6 +169,10 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
   /**
    * Get request body as JSON
    *
+   * When the route declares a `json` validator, this returns the schema's parsed output - with
+   * unknown keys stripped and coercions/defaults applied - because the validator writes it back
+   * via {@link setValidatedBody}. Without a validator it is the raw parsed body.
+   *
    * Throws HttpException(400) if JSON is invalid (industry standard behavior).
    * Empty body is valid and returns empty object {}.
    *
@@ -216,6 +220,24 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
         message: error instanceof Error ? error.message : 'Failed to parse JSON',
       });
     }
+  }
+
+  /**
+   * Replaces the cached body with a validator's parsed output.
+   *
+   * Internal: called by `Ergenecore.validateRequest()` after a `json` schema passes. Zod's output
+   * is what the schema actually describes - unknown keys stripped, coercions and defaults
+   * applied - and discarding it meant `getBody()` handed the handler the raw payload, so a
+   * strict validator sitting right next to `updateById({ ...body })` prevented nothing.
+   *
+   * The validator has necessarily read the body already, so the cache is warm and this only
+   * swaps its contents; no second read of the request stream happens.
+   *
+   * @param data - Validated body produced by the schema
+   */
+  public setValidatedBody(data: unknown): void {
+    this.bodyCache = data;
+    this.bodyRead = true;
   }
 
   /**
