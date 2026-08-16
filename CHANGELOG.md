@@ -1,5 +1,70 @@
 # @asenajs/ergenecore
 
+## 3.1.0
+
+### Minor Changes
+
+- 974efef: `getBody()` returns validated data; CORS sets `Vary: Origin` and stops answering 403
+
+  Three independent fixes, mirroring the Hono adapter — the CORS middleware was the same code in both
+  packages, and the body problem was worse here.
+
+  **`getBody()` now returns the validator's output.** `validateRequest()` ran `schema.safeParse()`,
+  threw on failure, and discarded `result.data` on success, so `getBody()` kept returning the raw
+  `JSON.parse` output from its body cache. Since `z.object()` strips unknown keys rather than
+  rejecting them, a route could declare a strict schema, pass validation, and still hand the handler
+  every extra key the client attached — making
+
+  ```ts
+  await this.repository.updateById(id, await context.getBody());
+  ```
+
+  a mass-assignment sink on every validated route. Unlike the Hono adapter there was not even a raw
+  accessor to reach the parsed value; it was computed and thrown away.
+
+  The validator now writes its output back through `setValidatedBody()`, which swaps the already-warm
+  body cache — no second read of the request stream. Routes without a validator are unaffected. Only
+  the body is swapped; `query`, `param` and `header` schemas still validate but their coerced output
+  is not written back, since those accessors read the request directly and have no cache to swap.
+
+  **`CorsMiddleware` sets `Vary: Origin`.** For any `origin` config other than the literal `'*'` the
+  allowed-origin header is computed from the request's own `Origin`, and nothing said so. A CDN or
+  shared proxy in front of the API could hand one origin's `Access-Control-Allow-Origin` to a request
+  from a different origin. Because `setResponseHeader` writes into a Map here, an existing `Vary` is
+  merged rather than overwritten — a plain set would have dropped an upstream `Vary: Accept-Encoding`.
+
+  **A disallowed origin is served without CORS headers instead of `403`.** CORS is a policy the
+  browser enforces on the user's behalf; the denial the spec describes is a response the browser
+  refuses to expose, not a server-side rejection. The 403 additionally turned away non-browser callers
+  that merely send an `Origin` header. If you relied on it as access control, it was never one.
+
+  **Preflight responses keep headers set upstream.** The 204 was built from a fresh headers object, so
+  anything an earlier middleware wrote through `setResponseHeader` was dropped from preflights alone.
+
+  **Middleware headers now reach every response, not just the ones `ctx.send()` built.** Headers staged
+  with `setResponseHeader` were merged inside `send()`/`html()`/`stream()`. A handler that returned a
+  plain object, returned a raw `Response`, or threw produced a response that never passed through the
+  wrapper, so it carried no `Access-Control-Allow-Origin` and no `Vary` at all — CORS was not merely
+  uncached on those routes, it was absent, and a browser could not read the error response either. The
+  Hono adapter never had this gap because Hono merges headers itself, so the same application code
+  behaved differently on the two adapters. The route handler now applies staged headers at its single
+  exit; headers the response already carries win, matching how `send()` lets its own arguments override.
+
+  **The default `BunLocalTransport` is written back to the adapter's field.** It was assigned to a
+  local variable, so sockets — which are built from the field — got `undefined` while
+  `AsenaWebSocketServer` got the default, and the framework's two broadcast paths disagreed about the
+  sender in the default configuration. The shutdown path reads the same field, so the default was also
+  never torn down.
+
+  This half pairs with `@asenajs/asena` 0.10.1, which adds `publishRemote()` and makes
+  `socket.publish()` exclude the sender whatever transport is configured. **The peer range moves to
+  `^0.10.1`.** Writing the default transport back to the field is what makes the older core reachable:
+  on 0.10.0 `AsenaSocket.publish()` has no `publishRemote` branch, so a set transport sends it down
+  `transport.publish()` → `server.publish()` and the sender receives its own message — in the default
+  configuration, not just for applications that configured a transport. The range is the only thing
+  that can rule that combination out, so the adapter no longer claims to support it. The startup
+  warning naming `publishRemote` stays for transports that are simply older than the contract.
+
 ## 3.0.0
 
 ### Major Changes
@@ -50,7 +115,7 @@
 
   `RateLimiterMiddleware.destroy()` now carries `@OnStop`, so `server.stop()` clears its cleanup
   interval and bucket map. The interval was `unref()`'d and never held the process open, but it
-  survived a stop/start cycle *inside* one process — twenty of them is an ordinary test suite.
+  survived a stop/start cycle _inside_ one process — twenty of them is an ordinary test suite.
 
   Requires `@asenajs/asena@^0.10.0`, which is where `@OnStop` comes from.
 

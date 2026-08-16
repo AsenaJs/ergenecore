@@ -94,9 +94,10 @@ export interface CorsOptions {
  *
  * **CORS Flow:**
  * 1. Check if request has Origin header (if not, skip CORS)
- * 2. Validate origin against allowed origins
- * 3. Handle preflight OPTIONS request → return 204 immediately
- * 4. For other requests → set CORS headers and call next()
+ * 2. Advertise that the response varies by Origin (unless the config is the literal '*')
+ * 3. Validate origin - when it is not allowed, emit no CORS headers and carry on
+ * 4. Handle preflight OPTIONS request → return 204 immediately
+ * 5. For other requests → set CORS headers and call next()
  */
 export class CorsMiddleware extends MiddlewareService {
   private readonly origin: '*' | string[] | ((origin: string) => boolean);
@@ -148,9 +149,17 @@ export class CorsMiddleware extends MiddlewareService {
    *
    * Execution flow:
    * 1. Check if Origin header present (if not, skip CORS)
-   * 2. Validate origin
-   * 3. Handle preflight OPTIONS → return 204 No Content
-   * 4. Set CORS headers for actual request → call next()
+   * 2. Advertise that the response varies by Origin (unless the config is the literal '*')
+   * 3. Validate origin - when it is not allowed, emit no CORS headers and carry on
+   * 4. Handle preflight OPTIONS → return 204 No Content
+   * 5. Set CORS headers for actual request → call next()
+   *
+   * A disallowed origin is *not* answered with 403. CORS is a policy the browser enforces on
+   * behalf of the user, not an access-control decision the server makes: the correct denial is a
+   * normal response with no `Access-Control-Allow-Origin`, which the browser then refuses to
+   * expose. Rejecting outright also turned away every non-browser caller that happens to send an
+   * Origin header - server-to-server clients, proxies, webviews - and forced applications to
+   * register this middleware conditionally when CORS was already terminated at the ingress.
    *
    * @param context - Ergenecore context wrapper
    * @param next - Function to call next middleware or handler
@@ -164,45 +173,71 @@ export class CorsMiddleware extends MiddlewareService {
       return await next();
     }
 
-    // Validate origin
     const allowedOrigin = this.getAllowedOrigin(origin);
 
-    if (!allowedOrigin) {
-      // Origin not allowed → block request
-      return new Response('CORS: Origin not allowed', { status: 403 });
+    // Any config but the literal '*' makes the response depend on the request's Origin, so a
+    // shared cache must key on it or it hands one origin's response to another. Refusals too.
+    if (this.origin !== '*') {
+      this.appendVaryOrigin(context);
     }
 
-    // Set CORS headers using context.setResponseHeader (lazy initialization)
-    context.setResponseHeader('Access-Control-Allow-Origin', allowedOrigin);
+    if (allowedOrigin) {
+      context.setResponseHeader('Access-Control-Allow-Origin', allowedOrigin);
 
-    if (this.credentials) {
-      context.setResponseHeader('Access-Control-Allow-Credentials', 'true');
-    }
+      if (this.credentials) {
+        context.setResponseHeader('Access-Control-Allow-Credentials', 'true');
+      }
 
-    if (this.exposedHeaders) {
-      context.setResponseHeader('Access-Control-Expose-Headers', this.exposedHeaders);
+      if (this.exposedHeaders) {
+        context.setResponseHeader('Access-Control-Expose-Headers', this.exposedHeaders);
+      }
     }
 
     // Handle preflight OPTIONS request
     if (context.req.method === 'OPTIONS') {
-      // Build headers object for preflight response
-      const headers: Record<string, string> = {
-        'Access-Control-Allow-Origin': allowedOrigin,
-        'Access-Control-Allow-Methods': this.methods,
-        'Access-Control-Allow-Headers': this.allowedHeaders,
-        'Access-Control-Max-Age': this.maxAge,
-      };
-
-      if (this.credentials) {
-        headers['Access-Control-Allow-Credentials'] = 'true';
+      if (allowedOrigin) {
+        context.setResponseHeader('Access-Control-Allow-Methods', this.methods);
+        context.setResponseHeader('Access-Control-Allow-Headers', this.allowedHeaders);
+        context.setResponseHeader('Access-Control-Max-Age', this.maxAge);
       }
 
-      // Return 204 No Content for preflight
+      // Accumulated headers, not a fresh object, so what an earlier middleware set survives the 204.
+      const headers: Record<string, string> = {};
+
+      (context.res.headers as Map<string, string>).forEach((value, key) => {
+        headers[key] = value;
+      });
+
       return new Response(null, { status: 204, headers });
     }
 
     // For actual requests, continue to handler
     return await next();
+  }
+
+  /**
+   * Adds `Origin` to the response's `Vary` header, keeping whatever is already listed.
+   *
+   * Unlike the Hono adapter, `setResponseHeader` here writes into a Map and therefore overwrites.
+   * A plain set would drop an upstream `Vary: Accept-Encoding`, which is a caching bug of its own.
+   */
+  private appendVaryOrigin(context: Context): void {
+    const existing = (context.res.headers as Map<string, string>).get('Vary');
+
+    if (!existing) {
+      context.setResponseHeader('Vary', 'Origin');
+
+      return;
+    }
+
+    const alreadyListed = existing
+      .split(',')
+      .map((value) => value.trim().toLowerCase())
+      .includes('origin');
+
+    if (!alreadyListed) {
+      context.setResponseHeader('Vary', `${existing}, Origin`);
+    }
   }
 
   /**

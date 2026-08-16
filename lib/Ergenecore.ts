@@ -640,10 +640,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
   private logHandledError(error: unknown, context: Context): void {
     if (this.logErrors === false) return;
 
-    // Brand check, not `instanceof` - `respondToError` below uses `isHttpException` to decide the
-    // *response*, and with two resolved copies of this package `instanceof` disagrees with it: the
-    // client would get a correct 401 while this line computed 500 and wrote an error-level entry
-    // with a full stack. That is precisely the log flooding the level split exists to prevent.
+    // Brand check, not `instanceof` - it must agree with the `isHttpException` respondToError
+    // uses, or a correctly answered 401 is still logged here as a 500 with a full stack.
     const status = isHttpException(error) ? error.status : 500;
     const isServerError = status >= 500;
 
@@ -704,8 +702,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     this.logHandledError(error, context);
 
     // Branded check, not `instanceof`: with two resolved copies of this package `instanceof`
-    // answers false and every deliberate 401/403/404 would fall through to the generic 500
-    // below - silently, because the API still responds.
+    // answers false and every deliberate 401/403/404 silently becomes the generic 500 below.
     if (isHttpException(error)) {
       // `getResponse` is optional on the contract - the brand guarantees `status` and nothing
       // more, so a foreign exception type that carries only the brand is legal. Calling it
@@ -1126,21 +1123,22 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
           });
         });
 
-        // If middleware chain returned a custom response, return it
+        // Single choke point so middleware headers reach handlers that answer without the
+        // wrapper. Idempotent for `ctx.send()`, which merged them already.
         if (result instanceof Response) {
-          return result;
+          return context.applyMiddlewareHeaders(result);
         }
 
         // If middleware chain returned false (stopped), return 403
         if (result === false) {
-          return new Response('Forbidden', { status: 403 });
+          return context.applyMiddlewareHeaders(new Response('Forbidden', { status: 403 }));
         }
 
         // Default: result is true (should not happen with onComplete, but just in case)
-        return new Response(null, { status: 204 });
+        return context.applyMiddlewareHeaders(new Response(null, { status: 204 }));
       } catch (error) {
         // The context here already has params injected, so pass it through unchanged.
-        return await this.respondToError(error, context);
+        return context.applyMiddlewareHeaders(await this.respondToError(error, context));
       }
     };
   }
@@ -1214,29 +1212,29 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
       // Extract data to validate
       const data = await this.extractValidationData(context, key);
-      // Run Zod validation
       const result = schema.safeParse(data);
 
-      // If validation fails
-      if (!result.success) {
-        // Use custom hook if provided
-        if (hook) {
-          const hookResponse = await hook(result, context);
-
-          if (hookResponse) return hookResponse;
+      if (result.success) {
+        // Body only: z.object() strips unknown keys, so without the write-back getBody() hands
+        // the handler the raw payload. query/param/header read the request and have no cache.
+        if (key === 'json' || key === 'body') {
+          context.setValidatedBody(result.data);
         }
 
-        // Reported through the application's error handler so validation shares the same
-        // response envelope as every other error. The adapter used to answer its own 400 here
-        // when no handler was configured, which meant a validation failure was the one 4xx
-        // that reached neither `onError` nor the log. The envelope did not disappear with that
-        // branch - it moved onto `ValidationError.getResponse()`, which `respondToError`
-        // falls back to.
-        throw new ValidationError(result.error, key);
+        continue;
       }
+
+      if (hook) {
+        const hookResponse = await hook(result, context);
+
+        if (hookResponse) return hookResponse;
+      }
+
+      // Thrown, not answered here, so validation shares the same response envelope and the same
+      // log line as every other error. The 400 moved onto `ValidationError.getResponse()`.
+      throw new ValidationError(result.error, key);
     }
 
-    // All validations passed
     return null;
   }
 
