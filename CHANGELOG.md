@@ -41,6 +41,15 @@
   **Preflight responses keep headers set upstream.** The 204 was built from a fresh headers object, so
   anything an earlier middleware wrote through `setResponseHeader` was dropped from preflights alone.
 
+  **Middleware headers now reach every response, not just the ones `ctx.send()` built.** Headers staged
+  with `setResponseHeader` were merged inside `send()`/`html()`/`stream()`. A handler that returned a
+  plain object, returned a raw `Response`, or threw produced a response that never passed through the
+  wrapper, so it carried no `Access-Control-Allow-Origin` and no `Vary` at all — CORS was not merely
+  uncached on those routes, it was absent, and a browser could not read the error response either. The
+  Hono adapter never had this gap because Hono merges headers itself, so the same application code
+  behaved differently on the two adapters. The route handler now applies staged headers at its single
+  exit; headers the response already carries win, matching how `send()` lets its own arguments override.
+
   **The default `BunLocalTransport` is written back to the adapter's field.** It was assigned to a
   local variable, so sockets — which are built from the field — got `undefined` while
   `AsenaWebSocketServer` got the default, and the framework's two broadcast paths disagreed about the
@@ -48,10 +57,13 @@
   never torn down.
 
   This half pairs with `@asenajs/asena` 0.10.1, which adds `publishRemote()` and makes
-  `socket.publish()` exclude the sender whatever transport is configured. The peer range stays
-  `^0.10.0`, so an application can still resolve core `0.10.0` here; on that combination
-  `socket.publish()` takes core's legacy branch (sender included) and this adapter logs one warning at
-  startup naming `publishRemote`. Upgrading core to 0.10.1 is the fix.
+  `socket.publish()` exclude the sender whatever transport is configured. **The peer range moves to
+  `^0.10.1`.** Writing the default transport back to the field is what makes the older core reachable:
+  on 0.10.0 `AsenaSocket.publish()` has no `publishRemote` branch, so a set transport sends it down
+  `transport.publish()` → `server.publish()` and the sender receives its own message — in the default
+  configuration, not just for applications that configured a transport. The range is the only thing
+  that can rule that combination out, so the adapter no longer claims to support it. The startup
+  warning naming `publishRemote` stays for transports that are simply older than the contract.
 
 ## 3.0.0
 

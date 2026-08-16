@@ -309,6 +309,29 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
   }
 
   /**
+   * Copies the headers middlewares staged with `setResponseHeader()` onto a Response that was
+   * not built by `send()`/`html()`/`stream()` - a plain object, a raw `Response`, or an error
+   * response. Those never call `mergeHeaders()`, so without this a middleware's CORS headers
+   * reached only the routes that happened to answer through the wrapper.
+   *
+   * Headers already on the response win, matching `mergeHeaders()` where custom overrides
+   * middleware.
+   */
+  public applyMiddlewareHeaders(response: Response): Response {
+    if (!this._mockResponse || this._mockResponse.headers.size === 0) {
+      return response;
+    }
+
+    this._mockResponse.headers.forEach((value, key) => {
+      if (!response.headers.has(key)) {
+        response.headers.set(key, value);
+      }
+    });
+
+    return response;
+  }
+
+  /**
    * Send response (JSON or text based on data type)
    *
    * Automatically merges headers set by middlewares via setResponseHeader()

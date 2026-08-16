@@ -191,11 +191,8 @@ describe('CORS Middleware', () => {
         },
       });
 
-      // Refusing with 403 would make CORS a server-side denial, which it is not: the browser is
-      // what enforces the policy, and it does so by refusing to expose a response that carries no
-      // Access-Control-Allow-Origin. A 403 additionally turns away non-browser callers that merely
-      // happen to send an Origin header, which is why applications had to register this middleware
-      // conditionally when CORS was already terminated at the ingress.
+      // The browser enforces CORS by refusing a response with no Access-Control-Allow-Origin; a
+      // 403 would also block non-browser callers that merely send an Origin header.
       expect(response.status).toBe(200);
       expect((await response.json()).message).toBe('reached');
       expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
@@ -605,6 +602,80 @@ describe('CORS Middleware', () => {
 
       expect(response.status).toBe(204);
       expect(response.headers.get('Vary')).toContain('Origin');
+    });
+
+    it('should set Vary: Origin for a function config', async () => {
+      // The third accepted shape of CorsOptions. It reaches the same `origin !== '*'` branch,
+      // but nothing pinned that until this test.
+      const url = await boot({ origin: (origin: string) => origin.endsWith('.example.com') });
+
+      const response = await fetch(`${url}/test`, { headers: { Origin: 'https://app.example.com' } });
+
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://app.example.com');
+      expect(response.headers.get('Vary')).toContain('Origin');
+    });
+  });
+
+  /**
+   * Why these matter: a handler may answer with a plain object, a raw Response, or by throwing.
+   * None of those go through `ctx.send()`, which is the only place middleware headers used to be
+   * merged - so CORS was silently absent on whole classes of routes while the Hono adapter, whose
+   * framework merges headers for it, answered them correctly. Same public API, two behaviours.
+   */
+  describe('Middleware headers on responses the wrapper did not build', () => {
+    async function bootWith(handler: any, path = '/shape') {
+      adapter.registerRoute({
+        staticServe: undefined,
+        validator: undefined,
+        method: HttpMethod.GET,
+        path,
+        middlewares: [new CorsMiddleware({ origin: ['https://example.com'] })] as any,
+        handler,
+      });
+
+      server = await adapter.start();
+
+      return `http://localhost:${server.port}${path}`;
+    }
+
+    it('should carry CORS headers when the handler returns a plain object', async () => {
+      const url = await bootWith(async () => ({ message: 'plain' }));
+
+      const response = await fetch(url, { headers: { Origin: 'https://example.com' } });
+
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://example.com');
+      expect(response.headers.get('Vary')).toContain('Origin');
+    });
+
+    it('should carry CORS headers when the handler returns a raw Response', async () => {
+      const url = await bootWith(async () => new Response('raw'));
+
+      const response = await fetch(url, { headers: { Origin: 'https://example.com' } });
+
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://example.com');
+      expect(response.headers.get('Vary')).toContain('Origin');
+    });
+
+    it('should carry CORS headers on an error response', async () => {
+      // Without these a browser cannot read the failure either, so the client sees an opaque
+      // network error instead of the 500 the server actually sent.
+      const url = await bootWith(async () => {
+        throw new Error('boom');
+      });
+
+      const response = await fetch(url, { headers: { Origin: 'https://example.com' } });
+
+      expect(response.status).toBe(500);
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://example.com');
+    });
+
+    it('should not overwrite a header the handler set itself', async () => {
+      const url = await bootWith(async () => new Response('x', { headers: { Vary: 'Accept-Encoding' } }));
+
+      const response = await fetch(url, { headers: { Origin: 'https://example.com' } });
+
+      expect(response.headers.get('Vary')).toBe('Accept-Encoding');
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://example.com');
     });
   });
 

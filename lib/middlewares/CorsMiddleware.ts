@@ -94,9 +94,10 @@ export interface CorsOptions {
  *
  * **CORS Flow:**
  * 1. Check if request has Origin header (if not, skip CORS)
- * 2. Validate origin against allowed origins
- * 3. Handle preflight OPTIONS request → return 204 immediately
- * 4. For other requests → set CORS headers and call next()
+ * 2. Advertise that the response varies by Origin (unless the config is the literal '*')
+ * 3. Validate origin - when it is not allowed, emit no CORS headers and carry on
+ * 4. Handle preflight OPTIONS request → return 204 immediately
+ * 5. For other requests → set CORS headers and call next()
  */
 export class CorsMiddleware extends MiddlewareService {
   private readonly origin: '*' | string[] | ((origin: string) => boolean);
@@ -172,14 +173,10 @@ export class CorsMiddleware extends MiddlewareService {
       return await next();
     }
 
-    // Validate origin
     const allowedOrigin = this.getAllowedOrigin(origin);
 
-    // Any config other than the literal '*' makes the response depend on the request's Origin -
-    // the allowed-origin header is reflected back for arrays and functions, and the CORS headers
-    // are present or absent depending on the caller. A shared cache in front of the API must key
-    // on it, or it hands one origin's response to another. Set even when the origin is refused,
-    // because that response varies by Origin too.
+    // Any config but the literal '*' makes the response depend on the request's Origin, so a
+    // shared cache must key on it or it hands one origin's response to another. Refusals too.
     if (this.origin !== '*') {
       this.appendVaryOrigin(context);
     }
@@ -204,15 +201,13 @@ export class CorsMiddleware extends MiddlewareService {
         context.setResponseHeader('Access-Control-Max-Age', this.maxAge);
       }
 
-      // Built from the accumulated response headers rather than a fresh object, so anything an
-      // earlier middleware set via setResponseHeader survives the 204 instead of being dropped.
+      // Accumulated headers, not a fresh object, so what an earlier middleware set survives the 204.
       const headers: Record<string, string> = {};
 
       (context.res.headers as Map<string, string>).forEach((value, key) => {
         headers[key] = value;
       });
 
-      // Return 204 No Content for preflight
       return new Response(null, { status: 204, headers });
     }
 

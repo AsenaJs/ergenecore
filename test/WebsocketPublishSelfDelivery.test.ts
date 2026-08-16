@@ -132,9 +132,8 @@ describe('socket.publish() self-delivery does not depend on the transport', () =
     const transport = new FakeRemoteTransport();
     const port = await boot('rooms', transport);
 
-    // This is the load-bearing assertion of the whole fix. Before it, this count was 1: the
-    // publish came back to the socket that sent it, and applications carrying the compensating
-    // ws.send() saw 2.
+    // The load-bearing assertion: this count was 1 before the fix, and 2 for applications
+    // carrying the compensating ws.send().
     expect(await countFramesOnConnect(port, '/rooms')).toBe(0);
 
     // ...and the message still went out to the other pods, which is the transport's actual job.
@@ -145,10 +144,8 @@ describe('socket.publish() self-delivery does not depend on the transport', () =
   it('writes the default BunLocalTransport back to the field', async () => {
     await boot('rooms');
 
-    // The default used to be assigned to a local, so sockets - built from the field - got
-    // undefined while AsenaWebSocketServer got the default. That is what made the framework's own
-    // two broadcast paths disagree in the default configuration, and it also hid the default from
-    // the shutdown path, which reads the same field.
+    // The default used to land in a local, leaving sockets - built from the field - transport-less
+    // while AsenaWebSocketServer got one, so the two broadcast paths disagreed.
     expect(wsAdapter.transport).toBeInstanceOf(BunLocalTransport);
   });
 
