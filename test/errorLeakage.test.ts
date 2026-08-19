@@ -41,6 +41,7 @@ describe('an unhandled error does not leak its message to the client', () => {
   });
 
   const boot = async () => {
+    adapter.setPort(0);
     server = await adapter.start();
 
     return `http://localhost:${server.port}`;

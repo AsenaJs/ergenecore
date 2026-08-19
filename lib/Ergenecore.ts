@@ -1215,10 +1215,13 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       const result = schema.safeParse(data);
 
       if (result.success) {
-        // Body only: z.object() strips unknown keys, so without the write-back getBody() hands
-        // the handler the raw payload. query/param/header read the request and have no cache.
+        // Body targets only: z.object() strips unknown keys and the raw form parse is
+        // last-value-wins, so without the write-back the handler reads a shape the schema
+        // already replaced. query/param/header read the request and have no cache.
         if (key === 'json' || key === 'body') {
           context.setValidatedBody(result.data);
+        } else if (key === 'form') {
+          context.setValidatedForm(result.data);
         }
 
         continue;
@@ -1242,7 +1245,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * Extracts data from request based on validation target
    *
    * @param context - Request context
-   * @param target - Validation target (body, query, param, header)
+   * @param target - Validation target (body, query, param, header, form)
    * @returns Data to be validated
    */
   private async extractValidationData(context: Context, target: string): Promise<any> {
@@ -1287,6 +1290,35 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
           headers[key.toLowerCase()] = value;
         });
         return headers;
+      }
+
+      case 'form': {
+        const contentType = context.req.headers.get('content-type') ?? '';
+
+        // hono parity: non-form content-type validates {} (a required field then fails),
+        // instead of feeding JSON into a form schema
+        if (
+          !contentType.includes('multipart/form-data') &&
+          !contentType.includes('application/x-www-form-urlencoded')
+        ) {
+          return {};
+        }
+
+        const formData = await context.getFormData();
+        const form: Record<string, any> = Object.create(null);
+        formData.forEach((value, key) => {
+          if (key.endsWith('[]')) {
+            (form[key] ??= []).push(value);
+          } else if (Array.isArray(form[key])) {
+            form[key].push(value);
+          } else if (Object.hasOwn(form, key)) {
+            form[key] = [form[key], value];
+          } else {
+            form[key] = value;
+          }
+        });
+
+        return form;
       }
 
       default:

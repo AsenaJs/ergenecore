@@ -1,6 +1,6 @@
 # Asena Ergenecore Adapter
 
-[![Version](https://img.shields.io/badge/version-3.1.0-blue.svg)](https://asena.sh)
+[![Version](https://img.shields.io/badge/version-3.2.0-blue.svg)](https://asena.sh)
 [![Bun Version](https://img.shields.io/badge/Bun-1.3.12%2B-blueviolet)](https://bun.sh)
 
 **Blazing-fast** native Bun adapter for [Asena.js](https://github.com/asenajs/asena) - Built exclusively with Bun's native APIs for maximum performance.
@@ -213,6 +213,9 @@ const page = context.getQuery('page');
 
 // Get request body
 const body = await context.getBody();
+
+// Get a multipart/urlencoded body
+const form = await context.getParseBody();
 
 // Get headers
 const auth = context.getHeader('authorization');
@@ -481,7 +484,6 @@ async json(): Promise<ValidationSchema | ValidationSchemaWithHook> {
   return z.object({ /* schema */ });
 }
 ```
-
 ### Combining Middleware and Validation
 
 ```typescript

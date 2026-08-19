@@ -35,6 +35,16 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
 
   private bodyRead = false;
 
+  private formDataCache?: FormData;
+
+  private rawBodyCache?: Promise<ArrayBuffer>;
+
+  private contentTypeCache?: string;
+
+  private validatedForm: any = undefined;
+
+  private formValidated = false;
+
   /**
    * Lazy-initialized mock Response object
    * Only created when context.res is accessed (e.g., by middlewares setting headers)
@@ -118,20 +128,52 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
   }
 
   /**
+   * The request body, read once and replayed to every representation below.
+   *
+   * The stream can only be consumed once, so a middleware reading the raw bytes, a `form`
+   * validator, and a handler asking for JSON used to be mutually exclusive - whichever came
+   * second failed, as a misleading 400 or a bare stream error. The promise (not the buffer)
+   * is cached so concurrent readers share the single read.
+   */
+  private readRawBody(): Promise<ArrayBuffer> {
+    if (this.rawBodyCache === undefined) {
+      // Bun derives the content-type of an in-process Request from its FormData/Blob body and
+      // drops it once that body is consumed, so it has to be read before the read below.
+      this.contentTypeCache = this.request.headers.get('content-type') ?? '';
+      this.rawBodyCache = this.request.arrayBuffer();
+    }
+
+    return this.rawBodyCache;
+  }
+
+  private get contentType(): string {
+    return (this.contentTypeCache ??= this.request.headers.get('content-type') ?? '');
+  }
+
+  /**
    * Get request body as ArrayBuffer
    */
   public async getArrayBuffer(): Promise<ArrayBuffer> {
-    return await this.request.arrayBuffer();
+    return await this.readRawBody();
   }
 
   /**
    * Get parsed multipart/form-data body
+   *
+   * When the route declares a `form` validator this returns the schema's output, for the same
+   * reason {@link getBody} returns `req.valid('json')`: the validator already collapsed repeated
+   * keys into arrays and applied coercions, while the raw parse below is last-value-wins.
+   * Routes without a form validator keep the raw shape.
    */
   public async getParseBody(): Promise<any> {
-    const contentType = this.request.headers.get('content-type');
+    if (this.formValidated) {
+      return this.validatedForm;
+    }
 
-    if (contentType?.includes('multipart/form-data') || contentType?.includes('application/x-www-form-urlencoded')) {
-      const formData = await this.request.formData();
+    const contentType = this.contentType;
+
+    if (contentType.includes('multipart/form-data') || contentType.includes('application/x-www-form-urlencoded')) {
+      const formData = await this.getFormData();
       const result: Record<string, any> = {};
 
       formData.forEach((value, key) => {
@@ -141,21 +183,46 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
       return result;
     }
 
-    return await this.request.json();
+    return await this.getBody();
   }
 
   /**
    * Get request body as Blob
    */
   public async getBlob(): Promise<Blob> {
-    return await this.request.blob();
+    const type = this.contentType;
+
+    return new Blob([await this.readRawBody()], { type });
   }
 
   /**
    * Get request body as FormData
+   *
+   * Cached after first read (Request body stream can only be read once), so a `form`
+   * validator consuming the body does not break a handler that reads it again.
+   *
+   * @throws HttpException - 400 Bad Request if the form data is malformed
    */
   public async getFormData(): Promise<FormData> {
-    return await this.request.formData();
+    if (this.formDataCache) {
+      return this.formDataCache;
+    }
+
+    // The multipart boundary lives in the content-type, so the derived Response needs it
+    const contentType = this.contentType;
+
+    try {
+      const buffer = await this.readRawBody();
+
+      this.formDataCache = await new Response(buffer, { headers: { 'content-type': contentType } }).formData();
+
+      return this.formDataCache;
+    } catch (error) {
+      throw new HttpException(400, {
+        error: 'Malformed form data in request body',
+        message: error instanceof Error ? error.message : 'Failed to parse form data',
+      });
+    }
   }
 
   /**
@@ -200,7 +267,7 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
 
     try {
       // Get raw text first to check if body is empty
-      const text = await this.request.text();
+      const text = new TextDecoder().decode(await this.readRawBody());
 
       // Empty body is valid - return empty object
       if (!text || text.trim() === '') {
@@ -238,6 +305,21 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
   public setValidatedBody(data: unknown): void {
     this.bodyCache = data;
     this.bodyRead = true;
+  }
+
+  /**
+   * Replaces the parsed form body with a validator's parsed output.
+   *
+   * Internal: the `form` counterpart of {@link setValidatedBody}, called by
+   * `Ergenecore.validateRequest()` after a `form` schema passes. Kept separate from the body
+   * cache because the two representations are independent - a form validator says nothing
+   * about what `getBody()` should return.
+   *
+   * @param data - Validated form data produced by the schema
+   */
+  public setValidatedForm(data: unknown): void {
+    this.validatedForm = data;
+    this.formValidated = true;
   }
 
   /**

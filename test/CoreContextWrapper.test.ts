@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { ErgenecoreContextWrapper } from '../lib';
+import { ErgenecoreContextWrapper, HttpException } from '../lib';
 
 describe('CoreContextWrapper', () => {
   /**
@@ -139,6 +139,84 @@ describe('CoreContextWrapper', () => {
 
       expect(parsedBody).toBeDefined();
       // Note: getParseBody should return an object representation
+    });
+  });
+
+  /**
+   * The Request body is a one-shot stream, but the wrapper hands out several representations
+   * (text/JSON, FormData, ArrayBuffer, Blob). Without a shared raw-body cache each reader
+   * consumed the stream independently, so whichever came second failed - as a misleading
+   * 400 from the readers that wrap their errors, or as a bare stream error from the rest.
+   */
+  describe('Cross-Representation Body Reads', () => {
+    const multipartRequest = () => {
+      const formData = new FormData();
+
+      formData.append('name', 'John');
+
+      return new Request('http://localhost:3000/test', { method: 'POST', body: formData });
+    };
+
+    it('should serve getArrayBuffer after getFormData from the same request', async () => {
+      const wrapper = new ErgenecoreContextWrapper(multipartRequest());
+
+      const formData = await wrapper.getFormData();
+
+      expect(formData.get('name')).toBe('John');
+
+      const buffer = await wrapper.getArrayBuffer();
+
+      expect(buffer.byteLength).toBeGreaterThan(0);
+    });
+
+    it('should serve getArrayBuffer after getBody from the same request', async () => {
+      const request = createMockRequest({ method: 'POST', body: { name: 'John' } });
+      const wrapper = new ErgenecoreContextWrapper(request);
+
+      expect(await wrapper.getBody()).toEqual({ name: 'John' });
+
+      const buffer = await wrapper.getArrayBuffer();
+
+      expect(new TextDecoder().decode(buffer)).toBe(JSON.stringify({ name: 'John' }));
+    });
+
+    it('should return the same bytes on repeated getArrayBuffer calls', async () => {
+      const request = new Request('http://localhost:3000/test', { method: 'POST', body: 'raw-bytes' });
+      const wrapper = new ErgenecoreContextWrapper(request);
+
+      const first = await wrapper.getArrayBuffer();
+      const second = await wrapper.getArrayBuffer();
+
+      expect(new TextDecoder().decode(second)).toBe('raw-bytes');
+      expect(new TextDecoder().decode(first)).toBe('raw-bytes');
+    });
+
+    it('should keep the raw body readable after a malformed-form parse failure', async () => {
+      const request = new Request('http://localhost:3000/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'multipart/form-data; boundary=x' },
+        body: 'not a multipart payload',
+      });
+      const wrapper = new ErgenecoreContextWrapper(request);
+
+      await expect(wrapper.getFormData()).rejects.toThrow(HttpException);
+
+      // The failed parse must not eat the stream - the raw bytes are still there
+      const buffer = await wrapper.getArrayBuffer();
+
+      expect(new TextDecoder().decode(buffer)).toBe('not a multipart payload');
+    });
+
+    it('should keep rejecting non-JSON bodies from getBody', async () => {
+      // getBody is the JSON reader; the unified cache must not silently make it form-aware
+      const request = new Request('http://localhost:3000/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'name=John&age=25',
+      });
+      const wrapper = new ErgenecoreContextWrapper(request);
+
+      await expect(wrapper.getBody()).rejects.toThrow(HttpException);
     });
   });
 

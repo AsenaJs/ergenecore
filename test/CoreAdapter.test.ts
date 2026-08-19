@@ -285,6 +285,7 @@ describe('CoreAdapter', () => {
 
       expect(adapter['routesBuilt']).toBe(false);
 
+      adapter.setPort(0);
       await adapter.start();
 
       expect(adapter['routesBuilt']).toBe(true);
@@ -308,6 +309,7 @@ describe('CoreAdapter', () => {
 
       adapter['buildBunRoutes'] = buildSpy;
 
+      adapter.setPort(0);
       await adapter.start();
       expect(buildSpy).toHaveBeenCalledTimes(1);
 
@@ -326,6 +328,7 @@ describe('CoreAdapter', () => {
         handler,
       });
 
+      adapter.setPort(0);
       await adapter.start();
       const port = adapter['server'].port;
 
@@ -423,6 +426,7 @@ describe('CoreAdapter', () => {
     });
 
     it('should handle 404 for unregistered routes', async () => {
+      adapter.setPort(0);
       await adapter.start();
 
       const response = await fetch(`http://localhost:${adapter['server'].port}/notfound`);
@@ -469,6 +473,7 @@ describe('CoreAdapter', () => {
       testAdapter.registerHTMLRoute('/ui/home', mockBundle, 'FrontEnd', '/ui');
       testAdapter.registerHTMLRoute('/ui/about', mockBundle2, 'FrontEnd', '/ui');
 
+      testAdapter.setPort(0);
       await testAdapter.start();
 
       const infoCalls = (logger.info as any).mock.calls.map((c: any) => c[0]);
@@ -498,6 +503,7 @@ describe('CoreAdapter', () => {
       testAdapter.registerHTMLRoute('/ui/home', mockBundle1, 'FrontEnd', '/ui');
       testAdapter.registerHTMLRoute('/admin/dashboard', mockBundle2, 'AdminFrontEnd', '/admin');
 
+      testAdapter.setPort(0);
       await testAdapter.start();
 
       const infoCalls = (logger.info as any).mock.calls.map((c: any) => c[0]);
