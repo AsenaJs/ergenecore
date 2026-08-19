@@ -9,7 +9,7 @@
     "README.md",
     "LICENSE"
   ],
-  "version": "3.1.0",
+  "version": "3.2.0",
   "author": "LibirSoft",
   "license": "MIT",
   "engines": {
@@ -38,22 +38,22 @@
   },
   "devDependencies": {
     "@asenajs/asena": "^0.10.1",
-    "@changesets/cli": "^2.30.0",
+    "@changesets/cli": "^2.31.1",
     "@types/bun": "latest",
-    "@typescript-eslint/eslint-plugin": "^8.58.1",
-    "@typescript-eslint/parser": "^8.58.1",
-    "eslint": "^9.39.4",
+    "@typescript-eslint/eslint-plugin": "^8.67.0",
+    "@typescript-eslint/parser": "^8.67.0",
+    "eslint": "^9.39.5",
     "eslint-config-alloy": "^5.1.2",
     "eslint-config-prettier": "^9.1.2",
     "eslint-plugin-alloy": "^1.2.1",
     "eslint-plugin-import": "^2.32.0",
     "eslint-plugin-n": "^16.6.2",
-    "eslint-plugin-prettier": "^5.5.5",
+    "eslint-plugin-prettier": "^5.5.6",
     "eslint-plugin-promise": "^6.6.0",
-    "prettier": "^3.8.2",
+    "prettier": "^3.9.6",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.58.1",
-    "zod": "^4.3.6"
+    "typescript-eslint": "^8.67.0",
+    "zod": "^4.4.3"
   },
   "peerDependencies": {
     "@asenajs/asena": "^0.10.1",
