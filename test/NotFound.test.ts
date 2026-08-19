@@ -34,6 +34,7 @@ describe('onNotFound', () => {
       handler: async (ctx: Context) => ctx.send({ ok: true }),
     } as any);
 
+    adapter.setPort(0);
     server = await adapter.start();
 
     return `http://localhost:${server.port}`;
@@ -186,6 +187,7 @@ describe('the unmatched-route status is recorded on the context', () => {
       handler: async (ctx: Context) => ctx.send({ ok: true }),
     } as any);
 
+    adapter.setPort(0);
     server = await adapter.start();
 
     return `http://localhost:${server.port}`;
@@ -278,6 +280,7 @@ describe('global middleware control flow on an unmatched route', () => {
   let server: any;
 
   const boot = async () => {
+    adapter.setPort(0);
     server = await adapter.start();
 
     return `http://localhost:${server.port}`;
@@ -429,6 +432,7 @@ describe('thrown errors still go to onError', () => {
       },
     } as any);
 
+    adapter.setPort(0);
     server = await adapter.start();
 
     const response = await fetch(`http://localhost:${server.port}/forbidden`);
@@ -452,6 +456,7 @@ describe('thrown errors still go to onError', () => {
       },
     } as any);
 
+    adapter.setPort(0);
     server = await adapter.start();
 
     const response = await fetch(`http://localhost:${server.port}/teapot`);

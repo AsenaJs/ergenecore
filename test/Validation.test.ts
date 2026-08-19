@@ -471,6 +471,329 @@ describe('Validation System', () => {
     });
   });
 
+  describe('Form Validation', () => {
+    it('should validate multipart form data with file field', async () => {
+      // Before the `form` case existed in extractValidationData, every form() validator
+      // validated `{}` - a required z.file() field rejected every request with 400
+      const validator: BaseValidator<ValidationSchemaWithHook> = {
+        form: {
+          handle: () => ({
+            schema: z.object({
+              image: z.file(),
+              title: z.string(),
+            }),
+          }),
+          override: false,
+        },
+      };
+
+      adapter.registerRoute({
+        staticServe: undefined,
+        method: HttpMethod.POST,
+        path: '/upload',
+        middlewares: [],
+        validator: validator,
+        handler: async (ctx: Context) => ctx.send({ uploaded: true }),
+      });
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const formData = new FormData();
+
+      formData.append('image', new File(['x'], 'a.png', { type: 'image/png' }));
+      formData.append('title', 'My image');
+
+      const response = await fetch(`${baseUrl}/upload`, { method: 'POST', body: formData });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ uploaded: true });
+    });
+
+    it('should reject a missing required form field with target form', async () => {
+      const validator: BaseValidator<ValidationSchemaWithHook> = {
+        form: {
+          handle: () => ({ schema: z.object({ name: z.string().min(1) }) }),
+          override: false,
+        },
+      };
+
+      adapter.registerRoute({
+        staticServe: undefined,
+        method: HttpMethod.POST,
+        path: '/form-required',
+        middlewares: [],
+        validator: validator,
+        handler: async (ctx: Context) => ctx.send({ ok: true }),
+      });
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const missing = new FormData();
+
+      missing.append('other', 'value');
+
+      const response = await fetch(`${baseUrl}/form-required`, { method: 'POST', body: missing });
+
+      expect(response.status).toBe(400);
+
+      const data = await response.json();
+
+      expect(data.error).toBe('Validation failed');
+      expect(data.target).toBe('form');
+
+      // hono parity: non-form content-type validates `{}`, so the required field still
+      // fails instead of the JSON body being fed into the form schema
+      const jsonResponse = await fetch(`${baseUrl}/form-required`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'John' }),
+      });
+
+      expect(jsonResponse.status).toBe(400);
+    });
+
+    it('should let the handler re-read form data after validation', async () => {
+      const validator: BaseValidator<ValidationSchemaWithHook> = {
+        form: {
+          handle: () => ({ schema: z.object({ title: z.string() }) }),
+          override: false,
+        },
+      };
+
+      adapter.registerRoute({
+        staticServe: undefined,
+        method: HttpMethod.POST,
+        path: '/form-reread',
+        middlewares: [],
+        validator: validator,
+        handler: async (ctx: Context) => {
+          // The validator already consumed the body; without the FormData cache this
+          // second read of the single-shot stream throws
+          const formData = await ctx.getFormData();
+
+          return ctx.send({ title: formData.get('title') });
+        },
+      });
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const formData = new FormData();
+
+      formData.append('title', 'cached');
+
+      const response = await fetch(`${baseUrl}/form-reread`, { method: 'POST', body: formData });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ title: 'cached' });
+    });
+
+    it('should collapse repeated form keys into an array', async () => {
+      const validator: BaseValidator<ValidationSchemaWithHook> = {
+        form: {
+          handle: () => ({ schema: z.object({ tags: z.array(z.string()), name: z.string() }) }),
+          override: false,
+        },
+      };
+
+      adapter.registerRoute({
+        staticServe: undefined,
+        method: HttpMethod.POST,
+        path: '/form-repeat',
+        middlewares: [],
+        validator: validator,
+        handler: async (ctx: Context) => ctx.send({ ok: true }),
+      });
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const formData = new FormData();
+
+      formData.append('tags', 'a');
+      formData.append('tags', 'b');
+      formData.append('name', 'John');
+
+      const response = await fetch(`${baseUrl}/form-repeat`, { method: 'POST', body: formData });
+
+      expect(response.status).toBe(200);
+    });
+
+    it('should validate a form request a middleware already read the body of', async () => {
+      // Middlewares run before validation, so a middleware touching the raw body used to consume
+      // the single-shot stream and leave the form validator parsing nothing.
+      const validator: BaseValidator<ValidationSchemaWithHook> = {
+        form: {
+          handle: () => ({ schema: z.object({ name: z.string() }) }),
+          override: false,
+        },
+      };
+
+      adapter.registerRoute({
+        staticServe: undefined,
+        method: HttpMethod.POST,
+        path: '/form-after-middleware',
+        middlewares: [
+          {
+            handle: async (ctx: Context, next: () => Promise<void>) => {
+              await ctx.getArrayBuffer();
+
+              return next();
+            },
+          } as any,
+        ],
+        validator: validator,
+        handler: async (ctx: Context) => ctx.send({ ok: true }),
+      });
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const formData = new FormData();
+
+      formData.append('name', 'John');
+
+      const response = await fetch(`${baseUrl}/form-after-middleware`, { method: 'POST', body: formData });
+
+      expect(response.status).toBe(200);
+    });
+
+    it('should let the handler read the raw body after form validation', async () => {
+      const validator: BaseValidator<ValidationSchemaWithHook> = {
+        form: {
+          handle: () => ({ schema: z.object({ name: z.string() }) }),
+          override: false,
+        },
+      };
+
+      adapter.registerRoute({
+        staticServe: undefined,
+        method: HttpMethod.POST,
+        path: '/form-raw-reread',
+        middlewares: [],
+        validator: validator,
+        handler: async (ctx: Context) => {
+          const buffer = await ctx.getArrayBuffer();
+
+          return ctx.send({ bytes: buffer.byteLength });
+        },
+      });
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const formData = new FormData();
+
+      formData.append('name', 'John');
+
+      const response = await fetch(`${baseUrl}/form-raw-reread`, { method: 'POST', body: formData });
+
+      expect(response.status).toBe(200);
+      expect((await response.json()).bytes).toBeGreaterThan(0);
+    });
+
+    it('should answer a malformed multipart body with 400', async () => {
+      const validator: BaseValidator<ValidationSchemaWithHook> = {
+        form: {
+          handle: () => ({ schema: z.object({ name: z.string() }) }),
+          override: false,
+        },
+      };
+
+      adapter.registerRoute({
+        staticServe: undefined,
+        method: HttpMethod.POST,
+        path: '/form-malformed',
+        middlewares: [],
+        validator: validator,
+        handler: async (ctx: Context) => ctx.send({ ok: true }),
+      });
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const response = await fetch(`${baseUrl}/form-malformed`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'multipart/form-data; boundary=x' },
+        body: 'not a multipart payload',
+      });
+
+      expect(response.status).toBe(400);
+    });
+
+    it('should keep the file shape a repeated key produces', async () => {
+      // Hono parity, and the reason a schema cannot be written without knowing it: one file under
+      // a plain key stays a File, a second occurrence widens it to File[], and a `key[]` name is
+      // always an array - under the literal bracketed key.
+      const validator: BaseValidator<ValidationSchemaWithHook> = {
+        form: {
+          handle: () => ({
+            schema: z.object({
+              single: z.file(),
+              pair: z.array(z.file()).length(2),
+              'bracketed[]': z.array(z.file()).length(1),
+            }),
+          }),
+          override: false,
+        },
+      };
+
+      adapter.registerRoute({
+        staticServe: undefined,
+        method: HttpMethod.POST,
+        path: '/form-files',
+        middlewares: [],
+        validator: validator,
+        handler: async (ctx: Context) => ctx.send({ ok: true }),
+      });
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const formData = new FormData();
+
+      formData.append('single', new File(['a'], 'a.png', { type: 'image/png' }));
+      formData.append('pair', new File(['b'], 'b.png', { type: 'image/png' }));
+      formData.append('pair', new File(['c'], 'c.png', { type: 'image/png' }));
+      formData.append('bracketed[]', new File(['d'], 'd.png', { type: 'image/png' }));
+
+      const response = await fetch(`${baseUrl}/form-files`, { method: 'POST', body: formData });
+
+      expect(response.status).toBe(200);
+    });
+
+    it('should validate urlencoded form data', async () => {
+      const validator: BaseValidator<ValidationSchemaWithHook> = {
+        form: {
+          handle: () => ({ schema: z.object({ name: z.string(), age: z.coerce.number() }) }),
+          override: false,
+        },
+      };
+
+      adapter.registerRoute({
+        staticServe: undefined,
+        method: HttpMethod.POST,
+        path: '/form-urlencoded',
+        middlewares: [],
+        validator: validator,
+        handler: async (ctx: Context) => ctx.send({ ok: true }),
+      });
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const response = await fetch(`${baseUrl}/form-urlencoded`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'name=John&age=25',
+      });
+
+      expect(response.status).toBe(200);
+    });
+  });
+
   describe('Custom Validation Hooks', () => {
     it('should use custom hook for error handling', async () => {
       const validator: BaseValidator<ValidationSchemaWithHook> = {

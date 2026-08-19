@@ -148,6 +148,90 @@ describe('getBody() returns validated data', () => {
     expect(second).toEqual({ keep: 'yes' });
   });
 
+  it('hands the handler the validated form output through getParseBody', async () => {
+    // Same property as the json case, one representation over: the form validator collapses
+    // repeated keys into arrays and coerces, while getParseBody's own parse is last-value-wins.
+    // Without the write-back the handler saw `{ tags: 'b', age: '25' }` behind a schema that
+    // had already produced `{ tags: ['a','b'], age: 25 }`.
+    adapter.registerRoute({
+      staticServe: undefined,
+      method: HttpMethod.POST,
+      path: '/form',
+      middlewares: [],
+      validator: {
+        form: {
+          handle: () => ({ schema: z.object({ tags: z.array(z.string()), age: z.coerce.number() }) }),
+          override: false,
+        },
+      },
+      handler: async (ctx: Context) => ctx.send({ body: await ctx.getParseBody() }),
+    } as any);
+
+    server = await adapter.start();
+
+    const formData = new FormData();
+
+    formData.append('tags', 'a');
+    formData.append('tags', 'b');
+    formData.append('age', '25');
+    formData.append('drop', 'unknown');
+
+    const response = await fetch(`http://localhost:${server.port}/form`, { method: 'POST', body: formData });
+
+    const { body } = await response.json();
+
+    expect(body).toEqual({ tags: ['a', 'b'], age: 25 });
+    expect(body.drop).toBeUndefined();
+  });
+
+  it('leaves form routes without a validator on the raw parsed body', async () => {
+    // The raw shape is last-value-wins and stays that way: only a validator's output replaces it.
+    adapter.registerRoute({
+      staticServe: undefined,
+      method: HttpMethod.POST,
+      path: '/form-raw',
+      middlewares: [],
+      validator: undefined,
+      handler: async (ctx: Context) => ctx.send({ body: await ctx.getParseBody() }),
+    } as any);
+
+    server = await adapter.start();
+
+    const formData = new FormData();
+
+    formData.append('tags', 'a');
+    formData.append('tags', 'b');
+
+    const response = await fetch(`http://localhost:${server.port}/form-raw`, { method: 'POST', body: formData });
+
+    expect((await response.json()).body).toEqual({ tags: 'b' });
+  });
+
+  it('keeps the form write-back out of getBody', async () => {
+    // The write-back is representation-scoped: getBody is the JSON reader, and a multipart body
+    // is not JSON no matter what the form validator produced.
+    adapter.registerRoute({
+      staticServe: undefined,
+      method: HttpMethod.POST,
+      path: '/form-getbody',
+      middlewares: [],
+      validator: {
+        form: { handle: () => ({ schema: z.object({ name: z.string() }) }), override: false },
+      },
+      handler: async (ctx: Context) => ctx.send({ body: await ctx.getBody() }),
+    } as any);
+
+    server = await adapter.start();
+
+    const formData = new FormData();
+
+    formData.append('name', 'John');
+
+    const response = await fetch(`http://localhost:${server.port}/form-getbody`, { method: 'POST', body: formData });
+
+    expect(response.status).toBe(400);
+  });
+
   it('does not write back for non-body validation targets', async () => {
     // query/param/header validation deliberately leaves getBody() alone - it has nothing to do
     // with the body, and swapping the cache from a query schema's output would be a real bug.
