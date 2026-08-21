@@ -1069,7 +1069,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     // ✅ Filter global middlewares by path pattern (ONCE during route building)
     // This happens at server startup, NOT on every request → zero runtime overhead
     const applicableGlobalMiddlewares = this.getGlobalMiddlewaresForPath(route.path);
-
+    // Combine global + route middlewares into a single chain
+    const middlewares = [...applicableGlobalMiddlewares, ...(route.middlewares || [])];
     return async (req: Request): Promise<Response> => {
       // Create context wrapper outside try block so it's accessible in catch
       const context = new ErgenecoreContextWrapper(req, this.server);
@@ -1088,12 +1089,9 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       }
 
       try {
-        // Combine global + route middlewares into a single chain
-        const allMiddlewares = [...applicableGlobalMiddlewares, ...(route.middlewares || [])];
-
         // Execute middleware chain with handler as onComplete callback
         // This ensures the handler runs INSIDE the middleware async context
-        const result = await this.executeMiddlewares(context, allMiddlewares, 0, async () => {
+        const result = await this.executeMiddlewares(context, middlewares, 0, async () => {
           // Execute validation
           if (route.validator) {
             const validationResult = await this.validateRequest(context, route.validator);
