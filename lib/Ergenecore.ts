@@ -33,6 +33,12 @@ import { shouldApplyMiddleware } from '@asenajs/asena/utils';
 const STATIC_JSON_HEADERS = Object.freeze({ 'Content-Type': 'application/json' });
 
 /**
+ * Pre-Serialise Body for 404/500
+ */
+const INTERNAL_SERVER_ERROR = JSON.stringify({ error: 'Internal Server Error' });
+const NOT_FOUND = JSON.stringify({ error: 'Not Found' });
+
+/**
  * CoreAdapter - Native Bun adapter for Asenajs
  *
  * High-performance HTTP adapter using Bun's native APIs exclusively:
@@ -603,7 +609,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
     this.logUnmatched(path, method);
 
-    return new Response(JSON.stringify({ error: 'Not Found' }), {
+    return new Response(NOT_FOUND, {
       status: 404,
       headers: STATIC_JSON_HEADERS,
     });
@@ -717,7 +723,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       // be safe to echo - the same reasoning as the generic 500 below. The status is honoured
       // because that part *is* in the contract, and collapsing a deliberate 429 to a 500 is the
       // failure the brand exists to prevent.
-      return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+      return new Response(INTERNAL_SERVER_ERROR, {
         status: error.status,
         headers: STATIC_JSON_HEADERS,
       });
@@ -727,7 +733,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     // did not anticipate, and its message routinely carries a connection string, a file path or a
     // driver's raw complaint. The message is not lost - `logHandledError` above wrote it with a
     // stack. An application that wants to say more declares `onError`.
-    return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+    return new Response(INTERNAL_SERVER_ERROR, {
       status: 500,
       headers: STATIC_JSON_HEADERS,
     });
@@ -1069,7 +1075,10 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     // ✅ Filter global middlewares by path pattern (ONCE during route building)
     // This happens at server startup, NOT on every request → zero runtime overhead
     const applicableGlobalMiddlewares = this.getGlobalMiddlewaresForPath(route.path);
-
+    // Combine global + route middlewares into a single chain
+    const middlewares = [...applicableGlobalMiddlewares, ...(route.middlewares || [])];
+    // Resolved root for static file serving, computed once at startup instead of per request
+    const resolvedStaticRoot = route.staticServe ? path.resolve(route.staticServe.root) : '';
     return async (req: Request): Promise<Response> => {
       // Create context wrapper outside try block so it's accessible in catch
       const context = new ErgenecoreContextWrapper(req, this.server);
@@ -1088,12 +1097,9 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       }
 
       try {
-        // Combine global + route middlewares into a single chain
-        const allMiddlewares = [...applicableGlobalMiddlewares, ...(route.middlewares || [])];
-
         // Execute middleware chain with handler as onComplete callback
         // This ensures the handler runs INSIDE the middleware async context
-        const result = await this.executeMiddlewares(context, allMiddlewares, 0, async () => {
+        const result = await this.executeMiddlewares(context, middlewares, 0, async () => {
           // Execute validation
           if (route.validator) {
             const validationResult = await this.validateRequest(context, route.validator);
@@ -1103,7 +1109,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
           // Handle static file serving
           if (route.staticServe) {
-            const staticResponse = await this.serveStaticFile(req, context, route.staticServe);
+            const staticResponse = await this.serveStaticFile(req, context, route.staticServe, resolvedStaticRoot);
 
             if (staticResponse) return staticResponse;
           }
@@ -1119,7 +1125,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
           // Otherwise, wrap in Response
           return new Response(JSON.stringify(response), {
             status: 200,
-            headers: { 'Content-Type': 'application/json' },
+            headers: STATIC_JSON_HEADERS,
           });
         });
 
@@ -1355,6 +1361,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     req: Request,
     context: Context,
     staticServe: BaseStaticServeParams<Context, StaticServeExtras>,
+    resolvedRoot: string,
   ): Promise<Response | null> {
     // Deliberately no try/catch. Anything thrown here - a rewriteRequestPath that raises, a
     // path.resolve or Bun.file failure - travels up to createRouteHandler's catch and through
@@ -1373,9 +1380,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     const filePath = path.join(staticServe.root, rewrittenPath);
 
     // 4. Security: Resolve and validate path to prevent traversal attacks
-    // Resolve both paths to absolute canonical paths
     const resolvedFilePath = path.resolve(filePath);
-    const resolvedRoot = path.resolve(staticServe.root);
 
     // Check if resolved file path is within root directory
     if (!resolvedFilePath.startsWith(resolvedRoot)) {
@@ -1405,7 +1410,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       // `text/plain` 404 and never consult the config hook - so the same app produced a
       // different 404 body here than on the hono adapter, where serveStatic calls next()
       // and the request lands in app.notFound.
-      return await this.respondToUnmatched(context, new URL(req.url).pathname, req.method);
+      return await this.respondToUnmatched(context, url.pathname, req.method);
     }
 
     // 7. File found → trigger onFound hook
