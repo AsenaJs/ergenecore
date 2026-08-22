@@ -21,7 +21,7 @@ import type { Server } from 'bun';
 import * as Bun from 'bun';
 import * as path from 'path';
 import type { StaticServeExtras, ValidationSchema, ValidationSchemaWithHook } from './types';
-import { MiddlewareResponseError, ValidationError } from './errors';
+import { HttpException, MiddlewareResponseError, ValidationError } from './errors';
 import { shouldApplyMiddleware } from '@asenajs/asena/utils';
 
 /**
@@ -1079,6 +1079,12 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     const middlewares = [...applicableGlobalMiddlewares, ...(route.middlewares || [])];
     // Resolved root for static file serving, computed once at startup instead of per request
     const resolvedStaticRoot = route.staticServe ? path.resolve(route.staticServe.root) : '';
+    // The containment test below is a prefix comparison, so it needs the separator baked in.
+    // `path.resolve` only ever leaves a trailing separator when the root *is* the filesystem
+    // root, where appending another would produce `//` and reject every path.
+    const resolvedStaticRootPrefix = resolvedStaticRoot.endsWith(path.sep)
+      ? resolvedStaticRoot
+      : `${resolvedStaticRoot}${path.sep}`;
     return async (req: Request): Promise<Response> => {
       // Create context wrapper outside try block so it's accessible in catch
       const context = new ErgenecoreContextWrapper(req, this.server);
@@ -1109,7 +1115,13 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
           // Handle static file serving
           if (route.staticServe) {
-            const staticResponse = await this.serveStaticFile(req, context, route.staticServe, resolvedStaticRoot);
+            const staticResponse = await this.serveStaticFile(
+              req,
+              context,
+              route.staticServe,
+              resolvedStaticRoot,
+              resolvedStaticRootPrefix,
+            );
 
             if (staticResponse) return staticResponse;
           }
@@ -1362,6 +1374,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     context: Context,
     staticServe: BaseStaticServeParams<Context, StaticServeExtras>,
     resolvedRoot: string,
+    resolvedRootPrefix: string,
   ): Promise<Response | null> {
     // Deliberately no try/catch. Anything thrown here - a rewriteRequestPath that raises, a
     // path.resolve or Bun.file failure - travels up to createRouteHandler's catch and through
@@ -1371,7 +1384,17 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
     // 1. Extract request path from URL
     const url = new URL(req.url);
-    const requestPath = decodeURIComponent(url.pathname); // Decode URL encoding
+
+    // A malformed escape - `%zz`, a lone `%` - makes decodeURIComponent throw a URIError, which
+    // reached respondToError as an unbranded error: a 500, an error-level log with a stack, and
+    // the application's onError handed a request the client had simply written wrong.
+    let requestPath: string;
+
+    try {
+      requestPath = decodeURIComponent(url.pathname);
+    } catch {
+      throw new HttpException(400, { error: 'Bad Request' });
+    }
 
     // 2. Apply path rewriting if provided
     const rewrittenPath = staticServe.rewriteRequestPath ? staticServe.rewriteRequestPath(requestPath) : requestPath;
@@ -1382,8 +1405,12 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     // 4. Security: Resolve and validate path to prevent traversal attacks
     const resolvedFilePath = path.resolve(filePath);
 
-    // Check if resolved file path is within root directory
-    if (!resolvedFilePath.startsWith(resolvedRoot)) {
+    // Check if resolved file path is within root directory. The separator is what makes this a
+    // containment test rather than a string-prefix one: without it a root of `/srv/assets`
+    // accepted `/srv/assets-private/…`, reachable through `..%2F` in the request path. The
+    // equality arm keeps a request for the root itself - `GET /assets/` rewrites to `/` and
+    // joins back to the root - falling through to the application's 404 rather than a 403.
+    if (resolvedFilePath !== resolvedRoot && !resolvedFilePath.startsWith(resolvedRootPrefix)) {
       this.logger.warn(`Path traversal attempt detected: ${requestPath} -> ${resolvedFilePath}`);
       return new Response('Forbidden', { status: 403 });
     }
