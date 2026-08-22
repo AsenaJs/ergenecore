@@ -1,7 +1,7 @@
 # Asena Ergenecore Adapter
 
 [![Version](https://img.shields.io/badge/version-3.2.1-blue.svg)](https://asena.sh)
-[![Bun Version](https://img.shields.io/badge/Bun-1.3.12%2B-blueviolet)](https://bun.sh)
+[![Bun Version](https://img.shields.io/badge/Bun-1.4%2B-blueviolet)](https://bun.sh)
 
 **Blazing-fast** native Bun adapter for [Asena.js](https://github.com/asenajs/asena) - Built exclusively with Bun's native APIs for maximum performance.
 
@@ -39,7 +39,7 @@ Ergenecore is the **fastest** Asena adapter because it:
 
 ## Requirements
 
-- [Bun](https://bun.sh) v1.3.12 or higher
+- [Bun](https://bun.sh) v1.4 or higher
 - [@asenajs/asena](https://github.com/AsenaJs/Asena) v0.10.1 or higher (peer dependency)
 - [Zod](https://zod.dev) v4.3.6 or higher (peer dependency)
 - TypeScript v5.9.3 or higher (peer dependency)
