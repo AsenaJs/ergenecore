@@ -37,7 +37,7 @@ const STATIC_JSON_HEADERS = Object.freeze({ 'Content-Type': 'application/json' }
  */
 const INTERNAL_SERVER_ERROR = JSON.stringify({ error: 'Internal Server Error' });
 const NOT_FOUND = JSON.stringify({ error: 'Not Found' });
- 
+
 /**
  * CoreAdapter - Native Bun adapter for Asenajs
  *
@@ -1329,7 +1329,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     req: Request,
     context: Context,
     staticServe: BaseStaticServeParams<Context, StaticServeExtras>,
-    resolvedRoot: string
+    resolvedRoot: string,
   ): Promise<Response | null> {
     // Deliberately no try/catch. Anything thrown here - a rewriteRequestPath that raises, a
     // path.resolve or Bun.file failure - travels up to createRouteHandler's catch and through
