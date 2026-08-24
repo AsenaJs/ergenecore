@@ -389,7 +389,7 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
    * @param value - Header value
    */
   public setResponseHeader(key: string, value: string): void {
-    this.res.headers.set(key, value);
+    this.res.headers.set(key.toLowerCase(), value);
   }
 
   /**
@@ -403,9 +403,11 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
    * @param value - Header value to append
    */
   public appendResponseHeader(key: string, value: string): void {
-    const existing = this.res.headers.get(key);
+    // Header names are case-insensitive on the wire but the staging Map is not
+    const name = key.toLowerCase();
+    const existing = this.res.headers.get(name);
 
-    this.res.headers.set(key, existing ? `${existing}, ${value}` : value);
+    this.res.headers.set(name, existing ? `${existing}, ${value}` : value);
   }
 
   /**

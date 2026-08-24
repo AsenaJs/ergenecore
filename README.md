@@ -92,7 +92,7 @@ import type { Context } from '@asenajs/ergenecore/types';
 export class UserController {
   @Get({ path: '/' })
   async list(context: Context) {
-    const page = context.getQuery('page') || '1';
+    const page = (await context.getQuery('page')) ?? '1';
     return context.send({ users: [], page });
   }
 

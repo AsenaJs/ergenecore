@@ -222,7 +222,7 @@ export class CorsMiddleware extends MiddlewareService {
    * append when `Origin` is already listed - a duplicate entry would only confuse caches.
    */
   private appendVaryOrigin(context: Context): void {
-    const existing = (context.res.headers as Map<string, string>).get('Vary');
+    const existing = (context.res.headers as Map<string, string>).get('vary');
 
     const alreadyListed = existing
       ?.split(',')

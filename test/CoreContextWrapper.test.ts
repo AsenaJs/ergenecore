@@ -418,6 +418,18 @@ describe('CoreContextWrapper', () => {
       expect(response.headers.get('X-Test')).toBe('second');
     });
 
+    it('treats header names case-insensitively when staging set and append', () => {
+      const wrapper = new ErgenecoreContextWrapper(createMockRequest());
+
+      wrapper.setResponseHeader('vary', 'Accept-Encoding');
+
+      wrapper.appendResponseHeader('Vary', 'Origin');
+
+      const response = wrapper.send('ok');
+
+      expect(response.headers.get('Vary')).toBe('Accept-Encoding, Origin');
+    });
+
     it('should comma-join values when appendResponseHeader is called twice', () => {
       const wrapper = new ErgenecoreContextWrapper(createMockRequest());
 
