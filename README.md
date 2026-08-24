@@ -40,7 +40,7 @@ Ergenecore is the **fastest** Asena adapter because it:
 ## Requirements
 
 - [Bun](https://bun.sh) v1.4 or higher
-- [@asenajs/asena](https://github.com/AsenaJs/Asena) v0.10.1 or higher (peer dependency)
+- [@asenajs/asena](https://github.com/AsenaJs/Asena) v0.11.0 or higher (peer dependency)
 - [Zod](https://zod.dev) v4.3.6 or higher (peer dependency)
 - TypeScript v5.9.3 or higher (peer dependency)
 
@@ -208,8 +208,8 @@ import type { Context } from '@asenajs/ergenecore/types';
 // Get route parameters
 const id = context.getParam('id');
 
-// Get query parameters
-const page = context.getQuery('page');
+// Get query parameters (undefined when absent, '' when present but empty, e.g. "?page=")
+const page = await context.getQuery('page');
 
 // Get request body
 const body = await context.getBody();
@@ -225,6 +225,13 @@ return context.send({ success: true });
 
 // Send with custom status
 return context.send({ error: 'Not found' }, 404);
+
+// Set a response header (replaces any value already set for that header)
+context.setResponseHeader('X-Request-Id', 'abc');
+
+// Append to a response header, keeping existing values - for multi-valued
+// headers such as Vary and Link (Set-Cookie is not supported here; use setCookie)
+context.appendResponseHeader('Vary', 'Origin');
 
 // Set cookies
 context.setCookie('session', 'abc123', {
