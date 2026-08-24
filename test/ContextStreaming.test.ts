@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { ErgenecoreContextWrapper } from '../lib';
+import { ErgenecoreContextWrapper, SSEStreamWriter } from '../lib';
 
 describe('ErgenecoreContextWrapper - Streaming', () => {
   const createContext = (url = 'http://localhost:3000/test') => {
@@ -144,6 +144,59 @@ describe('ErgenecoreContextWrapper - Streaming', () => {
 
       expect(response.headers.get('X-Request-Id')).toBe('abc');
       expect(response.headers.get('content-type')).toBe('text/event-stream');
+    });
+
+    it('should emit a comment-only keep-alive frame as exactly ": ping\\n\\n"', async () => {
+      const context = createContext();
+      const response = context.streamSSE(async (stream) => {
+        await stream.writeSSE({ comment: 'ping' });
+      });
+
+      const result = await readAll(response);
+
+      expect(result).toBe(': ping\n\n');
+    });
+
+    it('should emit one ": " line per comment line', async () => {
+      const context = createContext();
+      const response = context.streamSSE(async (stream) => {
+        await stream.writeSSE({ comment: 'keep-alive\nstill here' });
+      });
+
+      const result = await readAll(response);
+
+      expect(result).toBe(': keep-alive\n: still here\n\n');
+    });
+
+    it('should emit comment lines before event and data lines', async () => {
+      const context = createContext();
+      const response = context.streamSSE(async (stream) => {
+        await stream.writeSSE({ comment: 'c', event: 'e', data: 'd' });
+      });
+
+      const result = await readAll(response);
+
+      expect(result).toBe(': c\nevent: e\ndata: d\n\n');
+    });
+
+    it('should keep the data-only field order event, data, id, retry', async () => {
+      const context = createContext();
+      const response = context.streamSSE(async (stream) => {
+        await stream.writeSSE({ data: 'd', event: 'e', id: '1', retry: 5000 });
+      });
+
+      const result = await readAll(response);
+
+      expect(result).toBe('event: e\ndata: d\nid: 1\nretry: 5000\n\n');
+    });
+
+    it('should throw when a message has neither data nor comment', async () => {
+      const { writable, readable } = new TransformStream();
+      const writer = new SSEStreamWriter(writable, readable);
+
+      await expect(writer.writeSSE({})).rejects.toThrow('writeSSE: message needs data or comment');
+
+      await writer.close();
     });
 
     it('should call onError when callback throws', async () => {

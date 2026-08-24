@@ -218,25 +218,19 @@ export class CorsMiddleware extends MiddlewareService {
   /**
    * Adds `Origin` to the response's `Vary` header, keeping whatever is already listed.
    *
-   * Unlike the Hono adapter, `setResponseHeader` here writes into a Map and therefore overwrites.
-   * A plain set would drop an upstream `Vary: Accept-Encoding`, which is a caching bug of its own.
+   * Appends rather than sets so an upstream `Vary: Accept-Encoding` survives, and skips the
+   * append when `Origin` is already listed - a duplicate entry would only confuse caches.
    */
   private appendVaryOrigin(context: Context): void {
     const existing = (context.res.headers as Map<string, string>).get('Vary');
 
-    if (!existing) {
-      context.setResponseHeader('Vary', 'Origin');
-
-      return;
-    }
-
     const alreadyListed = existing
-      .split(',')
+      ?.split(',')
       .map((value) => value.trim().toLowerCase())
       .includes('origin');
 
     if (!alreadyListed) {
-      context.setResponseHeader('Vary', `${existing}, Origin`);
+      context.appendResponseHeader('Vary', 'Origin');
     }
   }
 
