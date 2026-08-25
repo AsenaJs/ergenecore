@@ -592,6 +592,24 @@ describe('CORS Middleware', () => {
       expect(vary).toContain('Origin');
     });
 
+    it('should not duplicate Origin when it is already listed in Vary', async () => {
+      const url = await boot(
+        { origin: ['https://example.com'] },
+        {
+          handle: async (ctx: any, next: () => Promise<void>) => {
+            ctx.setResponseHeader('Vary', 'Accept-Encoding, Origin');
+
+            return await next();
+          },
+        },
+      );
+
+      const response = await fetch(`${url}/test`, { headers: { Origin: 'https://example.com' } });
+      const vary = response.headers.get('Vary');
+
+      expect(vary).toBe('Accept-Encoding, Origin');
+    });
+
     it('should set Vary: Origin on the preflight 204 too', async () => {
       const url = await boot({ origin: ['https://example.com'] });
 

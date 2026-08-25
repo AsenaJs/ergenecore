@@ -7,21 +7,34 @@ import { StreamWriter } from './StreamWriter';
  */
 export class SSEStreamWriter extends StreamWriter implements AsenaSSEStreamWriter {
   public async writeSSE(message: SSEMessage): Promise<void> {
-    const dataLines = message.data
-      .split(/\r\n|\r|\n/)
-      .map((line) => `data: ${line}`)
-      .join('\n');
+    if (message.data === undefined && message.comment === undefined) {
+      throw new Error('writeSSE: message needs data or comment');
+    }
 
-    const sseData =
-      [
-        message.event && `event: ${message.event}`,
-        dataLines,
-        message.id && `id: ${message.id}`,
-        message.retry && `retry: ${message.retry}`,
-      ]
-        .filter(Boolean)
-        .join('\n') + '\n\n';
+    const lines: string[] = [];
 
-    await this.write(sseData);
+    for (const line of message.comment?.split(/\r\n|\r|\n/) ?? []) {
+      lines.push(`: ${line}`);
+    }
+
+    if (message.event) {
+      lines.push(`event: ${message.event}`);
+    }
+
+    if (message.data !== undefined) {
+      for (const line of message.data.split(/\r\n|\r|\n/)) {
+        lines.push(`data: ${line}`);
+      }
+    }
+
+    if (message.id) {
+      lines.push(`id: ${message.id}`);
+    }
+
+    if (message.retry) {
+      lines.push(`retry: ${message.retry}`);
+    }
+
+    await this.write(lines.join('\n') + '\n\n');
   }
 }

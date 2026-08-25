@@ -324,9 +324,11 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
 
   /**
    * Get single query parameter by name
+   *
+   * Returns `undefined` when the parameter is absent, `''` when it is present but empty (`?name=`).
    */
-  public async getQuery(name: string): Promise<string> {
-    return this.url.searchParams.get(name) || '';
+  public async getQuery(name: string): Promise<string | undefined> {
+    return this.url.searchParams.get(name) ?? undefined;
   }
 
   /**
@@ -387,7 +389,25 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
    * @param value - Header value
    */
   public setResponseHeader(key: string, value: string): void {
-    this.res.headers.set(key, value);
+    this.res.headers.set(key.toLowerCase(), value);
+  }
+
+  /**
+   * Append a value to a response header, keeping any value already set for it (comma-joined) -
+   * the semantics multi-valued headers such as `Vary` and `Link` need.
+   *
+   * `Set-Cookie` cannot be comma-joined and is not supported here; cookies go through
+   * `setCookie`.
+   *
+   * @param key - Header name
+   * @param value - Header value to append
+   */
+  public appendResponseHeader(key: string, value: string): void {
+    // Header names are case-insensitive on the wire but the staging Map is not
+    const name = key.toLowerCase();
+    const existing = this.res.headers.get(name);
+
+    this.res.headers.set(name, existing ? `${existing}, ${value}` : value);
   }
 
   /**

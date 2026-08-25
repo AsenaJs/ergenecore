@@ -173,7 +173,7 @@ describe('CoreContextWrapper', () => {
       const request = createMockRequest({ method: 'POST', body: { name: 'John' } });
       const wrapper = new ErgenecoreContextWrapper(request);
 
-      expect(await wrapper.getBody()).toEqual({ name: 'John' });
+      expect(await wrapper.getBody<{ name: string }>()).toEqual({ name: 'John' });
 
       const buffer = await wrapper.getArrayBuffer();
 
@@ -232,13 +232,24 @@ describe('CoreContextWrapper', () => {
       expect(query).toBe('test');
     });
 
-    it('should return empty string for missing query parameter', async () => {
+    it('should return undefined for missing query parameter', async () => {
       const request = createMockRequest({
         url: 'http://localhost:3000/search',
       });
       const wrapper = new ErgenecoreContextWrapper(request);
 
       const query = await wrapper.getQuery('missing');
+
+      expect(query).toBeUndefined();
+    });
+
+    it('should return empty string for present-but-empty query parameter', async () => {
+      const request = createMockRequest({
+        url: 'http://localhost:3000/search?name=',
+      });
+      const wrapper = new ErgenecoreContextWrapper(request);
+
+      const query = await wrapper.getQuery('name');
 
       expect(query).toBe('');
     });
@@ -392,6 +403,66 @@ describe('CoreContextWrapper', () => {
 
       expect(response.status).toBe(201);
       expect(response.headers.get('X-Custom-Header')).toBe('custom');
+    });
+  });
+
+  describe('Response Headers', () => {
+    it('should keep the last value when setResponseHeader is called twice', () => {
+      const wrapper = new ErgenecoreContextWrapper(createMockRequest());
+
+      wrapper.setResponseHeader('X-Test', 'first');
+      wrapper.setResponseHeader('X-Test', 'second');
+
+      const response = wrapper.send('ok');
+
+      expect(response.headers.get('X-Test')).toBe('second');
+    });
+
+    it('treats header names case-insensitively when staging set and append', () => {
+      const wrapper = new ErgenecoreContextWrapper(createMockRequest());
+
+      wrapper.setResponseHeader('vary', 'Accept-Encoding');
+
+      wrapper.appendResponseHeader('Vary', 'Origin');
+
+      const response = wrapper.send('ok');
+
+      expect(response.headers.get('Vary')).toBe('Accept-Encoding, Origin');
+    });
+
+    it('should comma-join values when appendResponseHeader is called twice', () => {
+      const wrapper = new ErgenecoreContextWrapper(createMockRequest());
+
+      wrapper.appendResponseHeader('X-Test', 'a');
+      wrapper.appendResponseHeader('X-Test', 'b');
+
+      const response = wrapper.send('ok');
+
+      expect(response.headers.get('X-Test')).toBe('a, b');
+    });
+
+    it('should append to a value staged with setResponseHeader', () => {
+      const wrapper = new ErgenecoreContextWrapper(createMockRequest());
+
+      wrapper.setResponseHeader('Vary', 'Accept-Encoding');
+      wrapper.appendResponseHeader('Vary', 'Origin');
+
+      const response = wrapper.send('ok');
+
+      expect(response.headers.get('Vary')).toBe('Accept-Encoding, Origin');
+    });
+
+    it('should carry staged set and appended headers onto a raw Response', () => {
+      const wrapper = new ErgenecoreContextWrapper(createMockRequest());
+
+      wrapper.setResponseHeader('X-Set', 'value');
+      wrapper.appendResponseHeader('X-Append', 'a');
+      wrapper.appendResponseHeader('X-Append', 'b');
+
+      const response = wrapper.applyMiddlewareHeaders(new Response('raw'));
+
+      expect(response.headers.get('X-Set')).toBe('value');
+      expect(response.headers.get('X-Append')).toBe('a, b');
     });
   });
 

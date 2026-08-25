@@ -129,6 +129,32 @@ describe('Streaming Integration Tests', () => {
       expect(text).toContain('data: line2');
       expect(text).toContain('data: line3');
     });
+
+    it('should stream comment-only keep-alive frames invisibly to EventSource', async () => {
+      adapter.registerRoute({
+        staticServe: undefined,
+        validator: undefined,
+        method: HttpMethod.GET,
+        path: '/keepalive',
+        middlewares: [],
+        handler: async (ctx: Context) => {
+          return ctx.streamSSE(async (stream) => {
+            await stream.writeSSE({ comment: 'ping' });
+            await stream.writeSSE({ data: 'payload', event: 'update' });
+          });
+        },
+      });
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const response = await fetch(`${baseUrl}/keepalive`);
+      const text = await response.text();
+
+      expect(text).toContain(': ping\n\n');
+      expect(text).toContain('event: update');
+      expect(text).toContain('data: payload');
+    });
   });
 
   describe('Text Streaming', () => {
