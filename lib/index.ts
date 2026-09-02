@@ -51,6 +51,7 @@ export { StaticServeService } from './defaults/StaticServeService';
 // Built-in middlewares
 export { CorsMiddleware, type CorsOptions } from './middlewares/CorsMiddleware';
 export { RateLimiterMiddleware, type RateLimiterOptions } from './middlewares/RateLimiterMiddleware';
+export { WebSocketOriginMiddleware, type WebSocketOriginOptions } from './middlewares/WebSocketOriginMiddleware';
 
 // Types
 export type { Context } from './ErgenecoreContextWrapper';

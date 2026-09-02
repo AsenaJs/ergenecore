@@ -24,3 +24,4 @@ export { MiddlewareService } from './MiddlewareService';
 export { StaticServeService } from './StaticServeService';
 export { CorsMiddleware, type CorsOptions } from '../middlewares/CorsMiddleware';
 export { RateLimiterMiddleware, type RateLimiterOptions } from '../middlewares/RateLimiterMiddleware';
+export { WebSocketOriginMiddleware, type WebSocketOriginOptions } from '../middlewares/WebSocketOriginMiddleware';
