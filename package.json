@@ -56,7 +56,7 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@asenajs/asena": "^0.11.0",
+    "@asenajs/asena": "^0.11.0 || ^0.12.0",
     "typescript": "^5.9.3",
     "zod": "^4.3.6"
   }
