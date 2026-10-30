@@ -849,6 +849,55 @@ describe('Rate Limiter Middleware', () => {
       expect(rateLimiter.getBucketState('10.0.0.1')).toBeUndefined();
     });
 
+    // The limiter keeps the list by reference, so the peer read back after start() can join it
+    const startWithTrustList = async (list: string[]) => {
+      const rateLimiter = new RateLimiterMiddleware({ capacity: 2, refillRate: 0.1, trustProxy: list });
+
+      registerLimited(rateLimiter);
+      registerPeerProbe();
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      const { peer } = (await (await fetch(`${baseUrl}/peer`)).json()) as { peer: string };
+
+      return { rateLimiter, peer };
+    };
+
+    it('should match a plain IPv4 list entry against an IPv4-mapped hop and peer', async () => {
+      const list = ['10.0.0.1'];
+      const { rateLimiter, peer } = await startWithTrustList(list);
+
+      list.push(peer.replace(/^::ffff:/i, ''));
+
+      const results = await statuses(
+        ['4.4.4.4', '5.5.5.6', '6.6.6.6'].map((forged) => ({
+          'X-Forwarded-For': `${forged}, 5.5.5.5, ::ffff:10.0.0.1`,
+        })),
+      );
+
+      expect(results).toEqual([200, 200, 429]);
+      expect(rateLimiter.getBucketState('5.5.5.5')).toBeDefined();
+    });
+
+    it('should match an IPv4-mapped list entry against a plain IPv4 hop', async () => {
+      // A proxy writes the hop it saw as plain IPv4 while the list follows Bun's dual-stack form
+      const list = ['::ffff:10.0.0.1'];
+      const { rateLimiter, peer } = await startWithTrustList(list);
+
+      list.push(peer);
+
+      const results = await statuses(
+        ['4.4.4.4', '5.5.5.6', '6.6.6.6'].map((forged) => ({
+          'X-Forwarded-For': `${forged}, 5.5.5.5, 10.0.0.1`,
+        })),
+      );
+
+      expect(results).toEqual([200, 200, 429]);
+      expect(rateLimiter.getBucketState('5.5.5.5')).toBeDefined();
+      expect(rateLimiter.getBucketState('10.0.0.1')).toBeUndefined();
+    });
+
     it('should fall back to the peer when the forwarded header is over-long', async () => {
       const rateLimiter = new RateLimiterMiddleware({ capacity: 2, refillRate: 0.1, trustProxy: true });
 
