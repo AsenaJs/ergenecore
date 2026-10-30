@@ -1,8 +1,11 @@
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { Ergenecore, ErgenecoreWebsocketAdapter } from '../lib';
-import { CorsMiddleware, WebSocketOriginMiddleware } from '../lib/defaults';
+import { CorsMiddleware, MiddlewareService, WebSocketOriginMiddleware } from '../lib/defaults';
+import { createErgenecoreAdapter } from '../lib/utils/factory';
+import { AsenaServerFactory } from '@asenajs/asena';
+import { Middleware, WebSocket as WebSocketNamespace } from '@asenajs/asena/decorators';
 import type { ServerLogger } from '@asenajs/asena/logger';
-import type { AsenaWebSocketService, Socket } from '@asenajs/asena/web-socket';
+import { AsenaWebSocketService, type Socket } from '@asenajs/asena/web-socket';
 import type { Context } from '../lib';
 import type { Server } from 'bun';
 
@@ -162,5 +165,77 @@ describe('WebSocket Origin Middleware', () => {
     // cross-site session's cookie.
     expect(authCalls).toBe(0);
     expect(opened).toBe(0);
+  });
+});
+
+let diSessionAuthCalls = 0;
+
+@Middleware()
+class ChatOrigin extends WebSocketOriginMiddleware {
+  public constructor() {
+    super({ allowedOrigins: ['https://app.example'] });
+  }
+}
+
+@Middleware()
+class SessionAuth extends MiddlewareService {
+  public async handle(_context: Context, next: () => Promise<void>): Promise<any> {
+    diSessionAuthCalls++;
+
+    return await next();
+  }
+}
+
+@WebSocketNamespace({ path: 'chat', middlewares: [ChatOrigin, SessionAuth] })
+class ChatSocket extends AsenaWebSocketService<any> {}
+
+describe('WebSocketOriginMiddleware registered through @WebSocket({ middlewares })', () => {
+  let app: any;
+
+  afterEach(async () => {
+    await app?.stop();
+    app = undefined;
+  });
+
+  const boot = async (): Promise<number> => {
+    const port = 10000 + Math.floor(Math.random() * 22000);
+    const silentLogger: ServerLogger = { info: () => {}, warn: () => {}, error: () => {}, profile: () => {} };
+
+    diSessionAuthCalls = 0;
+    app = await AsenaServerFactory.create({
+      adapter: createErgenecoreAdapter({ logger: silentLogger }) as any,
+      logger: silentLogger,
+      port,
+      components: [ChatOrigin, SessionAuth, ChatSocket],
+    });
+    await app.start();
+
+    return port;
+  };
+
+  const handshake = (port: number, origin: string) =>
+    fetch(`http://localhost:${port}/chat`, {
+      headers: {
+        Connection: 'Upgrade',
+        Upgrade: 'websocket',
+        'Sec-WebSocket-Version': '13',
+        'Sec-WebSocket-Key': btoa('0123456789abcdef'),
+        Origin: origin,
+        Cookie: 'session=ok',
+      },
+    });
+
+  it('should reject a disallowed origin before the session middleware runs', async () => {
+    const port = await boot();
+
+    expect((await handshake(port, 'https://evil.example')).status).toBe(403);
+    expect(diSessionAuthCalls).toBe(0);
+  });
+
+  it('should upgrade an allowed origin through the session middleware', async () => {
+    const port = await boot();
+
+    expect((await handshake(port, 'https://app.example')).status).toBe(101);
+    expect(diSessionAuthCalls).toBe(1);
   });
 });
