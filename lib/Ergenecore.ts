@@ -23,6 +23,8 @@ import * as path from 'path';
 import type { StaticServeExtras, ValidationSchema, ValidationSchemaWithHook } from './types';
 import { HttpException, MiddlewareResponseError, ValidationError } from './errors';
 import { shouldApplyMiddleware } from '@asenajs/asena/utils';
+import { regularFileStats, StaticFileReader, staticFileHeaders } from './utils/staticFileReader';
+import type { Stats } from 'fs';
 
 /**
  * Static response headers for performance
@@ -37,6 +39,85 @@ const STATIC_JSON_HEADERS = Object.freeze({ 'Content-Type': 'application/json' }
  */
 const INTERNAL_SERVER_ERROR = JSON.stringify({ error: 'Internal Server Error' });
 const NOT_FOUND = JSON.stringify({ error: 'Not Found' });
+
+const JSON_HEADERS = new Headers(STATIC_JSON_HEADERS);
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value instanceof Promise ||
+    (value !== null &&
+      (typeof value === 'object' || typeof value === 'function') &&
+      typeof (value as PromiseLike<unknown>).then === 'function')
+  );
+}
+
+const JSON_INIT: ResponseInit = { headers: JSON_HEADERS };
+
+function toHandlerResponse(response: unknown): Response {
+  if (response instanceof Response) {
+    return response;
+  }
+
+  return new Response(JSON.stringify(response), JSON_INIT);
+}
+
+function resolveStaticPath(root: string, rewrittenPath: string): string {
+  // 3. Build absolute file path
+  const filePath = path.join(root, rewrittenPath);
+
+  // 4. Security: Resolve and validate path to prevent traversal attacks
+  return path.sep !== '/' || filePath.charCodeAt(0) !== 47
+    ? path.resolve(filePath)
+    : filePath.length > 1 && filePath.endsWith('/')
+      ? filePath.slice(0, -1)
+      : filePath;
+}
+
+function isNormalizedRelativePath(value: string): boolean {
+  if (typeof value !== 'string' || value.length === 0) {
+    return false;
+  }
+
+  let segmentStart = value.charCodeAt(0) === 47 ? 1 : 0;
+
+  for (let i = segmentStart; i <= value.length; i++) {
+    if (i < value.length && value.charCodeAt(i) !== 47) {
+      continue;
+    }
+
+    const length = i - segmentStart;
+
+    if (
+      length === 0 ||
+      (value.charCodeAt(segmentStart) === 46 && (length === 1 || (length === 2 && value.charCodeAt(i - 1) === 46)))
+    ) {
+      return false;
+    }
+
+    segmentStart = i + 1;
+  }
+
+  return true;
+}
+
+function requestPathname(url: string): string {
+  const authority = url.indexOf('//');
+  const start = authority === -1 ? -1 : url.indexOf('/', authority + 2);
+
+  if (start === -1) {
+    return new URL(url).pathname;
+  }
+
+  for (let i = start; i < url.length; i++) {
+    const code = url.charCodeAt(i);
+
+    if (code === 63 || code === 35) {
+      return url.slice(start, i);
+    }
+  }
+
+  return start === 0 ? url : url.slice(start);
+}
 
 /**
  * CoreAdapter - Native Bun adapter for Asenajs
@@ -94,6 +175,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * Handler for requests that matched no route
    */
   private notFoundHandler?: NotFoundHandler<Context>;
+
+  private readonly staticFileReader = new StaticFileReader();
 
   /**
    * Whether the adapter logs errors before handing them to the application.
@@ -363,6 +446,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         this.logger.info('Server stopped');
       }
     } finally {
+      this.staticFileReader.close();
+
       // In a `finally`, and swallowed: `AsenaServer.runStop()` awaits this call unguarded, so an
       // error escaping here would strand everything queued behind it - the components' @OnStop
       // hooks, the microservice transports, ulak. A WebSocket layer that cannot let go of a
@@ -769,7 +854,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     context: Context,
     middlewares: BaseMiddleware<Context>[],
     index = 0,
-    onComplete?: () => Promise<Response | boolean | void>,
+    onComplete?: () => Response | boolean | void | Promise<Response | boolean | void>,
   ): Promise<boolean | Response> {
     // Base case: all middlewares executed successfully
     if (index >= middlewares.length) {
@@ -1023,38 +1108,31 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     // - and once both were routed through `respondToError` the two bodies were identical. It was
     // also the only place the adapter read `errorHandler` at *build* time rather than per request,
     // so a handler registered after start() would have selected the wrong closure.
-    return async (req: Request): Promise<Response> => {
-      const context = new ErgenecoreContextWrapper(req, this.server);
+    const settle = (pending: PromiseLike<unknown>, context: Context): Promise<Response> =>
+      Promise.resolve(pending).then(toHandlerResponse, (error: unknown) => this.respondToError(error, context));
 
-      context.routePattern = route.path;
+    const hasParams = route.path.includes(':');
+
+    // Not `async`: a synchronous handler's Response goes back to Bun without a promise.
+    return (req: Request): Response | Promise<Response> => {
+      const context = new ErgenecoreContextWrapper(req, this.server, route.path);
 
       try {
-        // Inject Bun's native route params if present
         // @ts-expect-error - Bun adds params to Request
-        if (req.params) {
+        if (hasParams && req.params) {
           // @ts-expect-error - Bun adds params to Request
-          const params = req.params;
-
-          for (const key in params) {
-            context.setValue(`param:${key}`, params[key]);
-          }
+          context.setRouteParams(req.params);
         }
 
-        // Execute handler directly
-        const response = await route.handler(context);
+        const result: unknown = route.handler(context);
 
-        // Return response (check if already a Response object)
-        if (response instanceof Response) {
-          return response;
+        if (isThenable(result)) {
+          return settle(result, context);
         }
 
-        // Wrap in Response with static headers
-        return new Response(JSON.stringify(response), {
-          status: 200,
-          headers: STATIC_JSON_HEADERS,
-        });
+        return toHandlerResponse(result);
       } catch (error) {
-        return await this.respondToError(error, context);
+        return this.respondToError(error, context);
       }
     };
   }
@@ -1077,6 +1155,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     const applicableGlobalMiddlewares = this.getGlobalMiddlewaresForPath(route.path);
     // Combine global + route middlewares into a single chain
     const middlewares = [...applicableGlobalMiddlewares, ...(route.middlewares || [])];
+    const hasMiddlewares = middlewares.length > 0;
     // Resolved root for static file serving, computed once at startup instead of per request
     const resolvedStaticRoot = route.staticServe ? path.resolve(route.staticServe.root) : '';
     // The containment test below is a prefix comparison, so it needs the separator baked in.
@@ -1085,80 +1164,105 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     const resolvedStaticRootPrefix = resolvedStaticRoot.endsWith(path.sep)
       ? resolvedStaticRoot
       : `${resolvedStaticRoot}${path.sep}`;
-    return async (req: Request): Promise<Response> => {
-      // Create context wrapper outside try block so it's accessible in catch
-      const context = new ErgenecoreContextWrapper(req, this.server);
+    const joinsVerbatim =
+      path.sep === '/' && typeof route.staticServe?.root === 'string' && path.isAbsolute(route.staticServe.root);
+    const hasParams = route.path.includes(':');
 
-      context.routePattern = route.path;
+    const serveRoute = (req: Request, context: Context): Response | Promise<Response> => {
+      if (route.staticServe) {
+        const staticResponse = this.serveStaticFile(
+          req,
+          context,
+          route.staticServe,
+          resolvedStaticRoot,
+          resolvedStaticRootPrefix,
+          joinsVerbatim,
+        );
+
+        if (isThenable(staticResponse)) {
+          return staticResponse.then((response) => response ?? this.runRouteHandler(route, context));
+        }
+
+        return staticResponse;
+      }
+
+      return this.runRouteHandler(route, context);
+    };
+
+    const runRoute = route.validator
+      ? (req: Request, context: Context): Promise<Response> =>
+          this.validateRequest(context, route.validator).then(
+            (validationResult) => validationResult || serveRoute(req, context),
+          )
+      : serveRoute;
+
+    return (req: Request): Response | Promise<Response> => {
+      // Create context wrapper outside try block so it's accessible in catch
+      const context = new ErgenecoreContextWrapper(req, this.server, route.path);
 
       // Inject Bun's native route params
       // @ts-expect-error - Bun adds params to Request
-      if (req.params) {
+      if (hasParams && req.params) {
         // @ts-expect-error - Bun adds params to Request
-        const params = req.params;
-
-        for (const key in params) {
-          context.setValue(`param:${key}`, params[key]);
-        }
+        context.setRouteParams(req.params);
       }
 
       try {
-        // Execute middleware chain with handler as onComplete callback
-        // This ensures the handler runs INSIDE the middleware async context
-        const result = await this.executeMiddlewares(context, middlewares, 0, async () => {
-          // Execute validation
-          if (route.validator) {
-            const validationResult = await this.validateRequest(context, route.validator);
+        const result = hasMiddlewares
+          ? this.executeMiddlewares(context, middlewares, 0, () => runRoute(req, context))
+          : runRoute(req, context);
 
-            if (validationResult) return validationResult;
-          }
-
-          // Handle static file serving
-          if (route.staticServe) {
-            const staticResponse = await this.serveStaticFile(
-              req,
-              context,
-              route.staticServe,
-              resolvedStaticRoot,
-              resolvedStaticRootPrefix,
-            );
-
-            if (staticResponse) return staticResponse;
-          }
-
-          // Execute route handler
-          const response = await route.handler(context);
-
-          // If handler returns Response, return it directly
-          if (response instanceof Response) {
-            return response;
-          }
-
-          // Otherwise, wrap in Response
-          return new Response(JSON.stringify(response), {
-            status: 200,
-            headers: STATIC_JSON_HEADERS,
-          });
-        });
-
-        // Single choke point so middleware headers reach handlers that answer without the
-        // wrapper. Idempotent for `ctx.send()`, which merged them already.
-        if (result instanceof Response) {
-          return context.applyMiddlewareHeaders(result);
+        if (isThenable(result)) {
+          return this.settleRoute(context, result);
         }
 
-        // If middleware chain returned false (stopped), return 403
-        if (result === false) {
-          return context.applyMiddlewareHeaders(new Response('Forbidden', { status: 403 }));
-        }
-
-        // Default: result is true (should not happen with onComplete, but just in case)
-        return context.applyMiddlewareHeaders(new Response(null, { status: 204 }));
+        return this.finishRoute(context, result);
       } catch (error) {
-        // The context here already has params injected, so pass it through unchanged.
-        return context.applyMiddlewareHeaders(await this.respondToError(error, context));
+        return this.failRoute(context, error);
       }
     };
+  }
+
+  private runRouteHandler(
+    route: RouteParams<Context, ValidationSchemaWithHook>,
+    context: Context,
+  ): Response | Promise<Response> {
+    const response: unknown = route.handler(context);
+
+    if (isThenable(response)) {
+      return Promise.resolve(response).then(toHandlerResponse);
+    }
+
+    return toHandlerResponse(response);
+  }
+
+  private async settleRoute(context: Context, pending: PromiseLike<Response | boolean>): Promise<Response> {
+    try {
+      return this.finishRoute(context, await pending);
+    } catch (error) {
+      return await this.failRoute(context, error);
+    }
+  }
+
+  private finishRoute(context: Context, result: Response | boolean): Response {
+    // Single choke point so middleware headers reach handlers that answer without the
+    // wrapper. Idempotent for `ctx.send()`, which merged them already.
+    if (result instanceof Response) {
+      return context.applyMiddlewareHeaders(result);
+    }
+
+    // If middleware chain returned false (stopped), return 403
+    if (result === false) {
+      return context.applyMiddlewareHeaders(new Response('Forbidden', { status: 403 }));
+    }
+
+    // Default: result is true (should not happen with onComplete, but just in case)
+    return context.applyMiddlewareHeaders(new Response(null, { status: 204 }));
+  }
+
+  private async failRoute(context: Context, error: unknown): Promise<Response> {
+    // The context here already has params injected, so pass it through unchanged.
+    return context.applyMiddlewareHeaders(await this.respondToError(error, context));
   }
 
   /**
@@ -1214,7 +1318,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       }
 
       // Get validation schema
-      const validationSchema = await validatorHandler.handle();
+      const handled = validatorHandler.handle();
+      const validationSchema = isThenable(handled) ? await handled : handled;
 
       // Skip if no validation schema provided
       if (!validationSchema) {
@@ -1229,7 +1334,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       const hook = this.isValidationSchemaWithHook(validationSchema) ? (validationSchema.hook ?? null) : null;
 
       // Extract data to validate
-      const data = await this.extractValidationData(context, key);
+      const data =
+        key === 'json' || key === 'body' ? await context.getBody() : await this.extractValidationData(context, key);
       const result = schema.safeParse(data);
 
       if (result.success) {
@@ -1369,13 +1475,14 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * });
    * ```
    */
-  private async serveStaticFile(
+  private serveStaticFile(
     req: Request,
     context: Context,
     staticServe: BaseStaticServeParams<Context, StaticServeExtras>,
     resolvedRoot: string,
     resolvedRootPrefix: string,
-  ): Promise<Response | null> {
+    joinsVerbatim: boolean,
+  ): Response | Promise<Response | null> {
     // Deliberately no try/catch. Anything thrown here - a rewriteRequestPath that raises, a
     // path.resolve or Bun.file failure - travels up to createRouteHandler's catch and through
     // `respondToError`, like every other failure. Answering it here meant the body was
@@ -1383,7 +1490,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     // specifically a deployment path; and the application's `onError` never saw it at all.
 
     // 1. Extract request path from URL
-    const url = new URL(req.url);
+    const pathname = requestPathname(req.url);
 
     // A malformed escape - `%zz`, a lone `%` - makes decodeURIComponent throw a URIError, which
     // reached respondToError as an unbranded error: a 500, an error-level log with a stack, and
@@ -1391,7 +1498,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     let requestPath: string;
 
     try {
-      requestPath = decodeURIComponent(url.pathname);
+      requestPath = pathname.includes('%') ? decodeURIComponent(pathname) : pathname;
     } catch {
       throw new HttpException(400, { error: 'Bad Request' });
     }
@@ -1399,11 +1506,10 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     // 2. Apply path rewriting if provided
     const rewrittenPath = staticServe.rewriteRequestPath ? staticServe.rewriteRequestPath(requestPath) : requestPath;
 
-    // 3. Build absolute file path
-    const filePath = path.join(staticServe.root, rewrittenPath);
-
-    // 4. Security: Resolve and validate path to prevent traversal attacks
-    const resolvedFilePath = path.resolve(filePath);
+    const resolvedFilePath =
+      joinsVerbatim && isNormalizedRelativePath(rewrittenPath)
+        ? resolvedRootPrefix + (rewrittenPath.charCodeAt(0) === 47 ? rewrittenPath.slice(1) : rewrittenPath)
+        : resolveStaticPath(staticServe.root, rewrittenPath);
 
     // Check if resolved file path is within root directory. The separator is what makes this a
     // containment test rather than a string-prefix one: without it a root of `/srv/assets`
@@ -1414,6 +1520,47 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       this.logger.warn(`Path traversal attempt detected: ${requestPath} -> ${resolvedFilePath}`);
       return new Response('Forbidden', { status: 403 });
     }
+
+    const stats = regularFileStats(resolvedFilePath);
+
+    if (stats !== undefined && !staticServe.onFound) {
+      return this.statFileResponse(resolvedFilePath, stats, staticServe.extra, req);
+    }
+
+    return this.serveResolvedStaticFile(req, context, staticServe, pathname, rewrittenPath, resolvedFilePath, stats);
+  }
+
+  private statFileResponse(filePath: string, stats: Stats, extra: StaticServeExtras, req: Request): Response {
+    if (!extra) {
+      return this.staticFileReader.respond(filePath, stats, !req.headers.has('range'));
+    }
+
+    const read = this.staticFileReader.read(filePath, stats, !req.headers.has('range'));
+    const headers = this.withStaticExtras(staticFileHeaders(read.type, read.etag, read.lastModified), filePath, extra);
+
+    return new Response(read.bytes ?? Bun.file(filePath), { status: 200, headers });
+  }
+
+  private async serveResolvedStaticFile(
+    req: Request,
+    context: Context,
+    staticServe: BaseStaticServeParams<Context, StaticServeExtras>,
+    pathname: string,
+    rewrittenPath: string,
+    resolvedFilePath: string,
+    stats: Stats | undefined,
+  ): Promise<Response | null> {
+    if (stats !== undefined) {
+      await staticServe.onFound.handler(rewrittenPath, context);
+
+      if (staticServe.onFound.override) {
+        return null;
+      }
+
+      return this.statFileResponse(resolvedFilePath, stats, staticServe.extra, req);
+    }
+
+    this.staticFileReader.release(resolvedFilePath);
 
     // 5. Create Bun.file() instance
     const file = Bun.file(resolvedFilePath);
@@ -1437,7 +1584,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       // `text/plain` 404 and never consult the config hook - so the same app produced a
       // different 404 body here than on the hono adapter, where serveStatic calls next()
       // and the request lands in app.notFound.
-      return await this.respondToUnmatched(context, url.pathname, req.method);
+      return await this.respondToUnmatched(context, pathname, req.method);
     }
 
     // 7. File found → trigger onFound hook
@@ -1450,42 +1597,33 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       }
     }
 
-    // 8. Create Bun file response with automatic Content-Type detection
-    const fileResponse = new Response(file);
+    const lastModifiedMs = file.lastModified;
+    const finalHeaders = staticFileHeaders(
+      file.type,
+      `W/"${file.size}-${lastModifiedMs}"`,
+      new Date(lastModifiedMs).toUTCString(),
+    );
 
-    // 9. Build response headers starting with Bun's Content-Type
-    const finalHeaders = new Headers(fileResponse.headers);
-
-    // 10. Add cache validation headers (ETag and Last-Modified)
-    // ETag format: W/"<size>-<lastModified>" (weak validator)
-    const etag = `W/"${file.size}-${file.lastModified}"`;
-
-    finalHeaders.set('ETag', etag);
-
-    // Last-Modified: HTTP date format (RFC 7231)
-    const lastModified = new Date(file.lastModified).toUTCString();
-
-    finalHeaders.set('Last-Modified', lastModified);
-
-    // 11. Add custom headers (can override defaults)
-    const customHeaders = this.buildStaticFileHeaders(resolvedFilePath, staticServe.extra);
-
-    for (const [key, value] of Object.entries(customHeaders)) {
-      finalHeaders.set(key, value);
-    }
-
-    // 12. Add default Cache-Control if not provided
-    // Using 'public, max-age=0' allows caching but requires revalidation
-    if (!finalHeaders.has('Cache-Control')) {
-      finalHeaders.set('Cache-Control', 'public, max-age=0');
-    }
-
-    // 13. Return response with all headers
-    // This preserves Bun's zero-copy file serving while adding cache headers
-    return new Response(fileResponse.body, {
-      status: fileResponse.status,
-      headers: finalHeaders,
+    return new Response(file, {
+      status: 200,
+      headers: this.withStaticExtras(finalHeaders, resolvedFilePath, staticServe.extra),
     });
+  }
+
+  private withStaticExtras(headers: Headers, filePath: string, extras: StaticServeExtras): Headers {
+    if (extras) {
+      const customHeaders = this.buildStaticFileHeaders(filePath, extras);
+
+      for (const key in customHeaders) {
+        headers.set(key, customHeaders[key]);
+      }
+    }
+
+    if (!headers.has('Cache-Control')) {
+      headers.set('Cache-Control', 'public, max-age=0');
+    }
+
+    return headers;
   }
 
   /**
