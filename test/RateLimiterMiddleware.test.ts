@@ -1043,3 +1043,28 @@ describe('Rate Limiter Middleware', () => {
     });
   });
 });
+
+describe('Rate Limiter Middleware — maxBuckets validation', () => {
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])('should reject maxBuckets = %p', (maxBuckets) => {
+    expect(() => new RateLimiterMiddleware({ maxBuckets, cleanupInterval: 0 })).toThrow(
+      /maxBuckets must be a positive integer/,
+    );
+  });
+
+  it('should accept maxBuckets = 1 and hold at most one bucket', async () => {
+    const rateLimiter = new RateLimiterMiddleware({
+      maxBuckets: 1,
+      cleanupInterval: 0,
+      keyGenerator: (ctx) => (ctx as any).client,
+    });
+    const context = (client: string) => ({ client, setResponseHeader: () => {} }) as any;
+
+    await rateLimiter.handle(context('c1'), async () => {});
+    await rateLimiter.handle(context('c2'), async () => {});
+
+    expect(rateLimiter.getBucketState('c1')).toBeUndefined();
+    expect(rateLimiter.getBucketState('c2')).toBeDefined();
+
+    rateLimiter.destroy();
+  });
+});
