@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import { Ergenecore } from '../lib';
 import { ErgenecoreWebsocketAdapter } from '../lib';
 import { RateLimiterMiddleware } from '../lib/defaults';
@@ -896,6 +896,41 @@ describe('Rate Limiter Middleware', () => {
       expect(results).toEqual([200, 200, 429]);
       expect(rateLimiter.getBucketState('5.5.5.5')).toBeDefined();
       expect(rateLimiter.getBucketState('10.0.0.1')).toBeUndefined();
+    });
+
+    it('should warn once when a trusted peer sends no X-Forwarded-For', async () => {
+      const warn = spyOn(console, 'warn').mockImplementation(() => {});
+
+      try {
+        registerLimited(new RateLimiterMiddleware({ capacity: 10, refillRate: 0.1, trustProxy: true }));
+
+        server = await adapter.start();
+        baseUrl = `http://localhost:${server.port}`;
+
+        await statuses([{}, {}, {}]);
+
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0][0])).toContain('X-Forwarded-For');
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('should not warn when the trusted peer forwards the client hop', async () => {
+      const warn = spyOn(console, 'warn').mockImplementation(() => {});
+
+      try {
+        registerLimited(new RateLimiterMiddleware({ capacity: 10, refillRate: 0.1, trustProxy: true }));
+
+        server = await adapter.start();
+        baseUrl = `http://localhost:${server.port}`;
+
+        await statuses([{ 'X-Forwarded-For': '1.1.1.1' }, { 'X-Forwarded-For': '2.2.2.2' }]);
+
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
     });
 
     it('should fall back to the peer when the forwarded header is over-long', async () => {
