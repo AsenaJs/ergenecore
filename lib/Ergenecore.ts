@@ -5,13 +5,17 @@ import {
   type AsenaStartOptions,
   type BaseMiddleware,
   type BaseStaticServeParams,
-  type BaseValidator,
   type ErrorHandler,
   type NotFoundHandler,
   isHttpException,
   type RouteParams,
   VALIDATOR_METHODS,
   type ValidatorHandler,
+  ASENA_CONTEXT_CONTRACT,
+  assertContextAdapter,
+  assertRouteContract,
+  prepareContextValidation,
+  type ContractContextClass,
 } from '@asenajs/asena/adapter';
 import { blue, green, red, type ServerLogger, yellow } from '@asenajs/asena/logger';
 import type { GlobalMiddlewareConfig } from '@asenajs/asena/server/config';
@@ -117,6 +121,18 @@ function requestPathname(url: string): string {
   }
 
   return start === 0 ? url : url.slice(start);
+}
+
+interface ValidationStep {
+  target: (typeof VALIDATOR_METHODS)[number];
+  handle: () =>
+    | ValidationSchemaWithHook
+    | ValidationSchema
+    | undefined
+    | Promise<ValidationSchemaWithHook | ValidationSchema | undefined>;
+  extract: (context: Context) => Promise<unknown> | unknown;
+  prepared?: { schema: ValidationSchema; hook: ValidationSchemaWithHook['hook'] | null };
+  cachedResolved: boolean;
 }
 
 /**
@@ -327,6 +343,22 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * ```
    */
   public registerRoute(params: RouteParams<Context, ValidationSchemaWithHook>): void {
+    const label = `${params.method} ${params.path}`;
+    if (params.contextContract && !params.contextClass) {
+      throw new Error(`${label}: contextContract requires contextClass`);
+    }
+    if (
+      params.contextClass &&
+      params.contextContract !== undefined &&
+      params.contextContract !== params.contextClass[ASENA_CONTEXT_CONTRACT]
+    ) {
+      throw new Error(`${label}: contextContract does not match contextClass`);
+    }
+    if (params.validatorCache !== undefined && typeof params.validatorCache !== 'boolean') {
+      throw new Error(`${label}: validatorCache must be a boolean`);
+    }
+    assertRouteContract(params, params.contextClass, label);
+    assertContextAdapter(params.contextClass, 'ergenecore');
     this.routeQueue.push(params);
   }
 
@@ -356,7 +388,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
     if (!this.routesBuilt) {
       // 1. Build HTTP routes
-      const httpRoutes = this.buildBunRoutes();
+      const httpRoutes = await this.buildBunRoutes();
 
       // 2. Build WebSocket routes
       const wsRoutes = this.buildWebSocketRoutes();
@@ -514,7 +546,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    *
    * @returns Bun router object
    */
-  private buildBunRoutes(): Record<string, any> {
+  private async buildBunRoutes(): Promise<Record<string, any>> {
     const routes: Record<string, any> = {};
 
     // Group routes by exact path. There used to be an outer grouping by *base* path too, but
@@ -546,6 +578,11 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
       for (const route of pathRoutes) {
         const method = route.method.toUpperCase();
+        const contextClass = route.contextClass as ContractContextClass<Context> | undefined;
+        const validateContract = contextClass
+          ? prepareContextValidation(route.contextContract ?? contextClass[ASENA_CONTEXT_CONTRACT])
+          : undefined;
+        const validationSteps = route.validator ? await this.prepareValidationSteps(route) : [];
 
         // Fast Path Optimization with Pattern Matching
         // ✅ Check if this route has any applicable global middlewares
@@ -556,10 +593,13 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
           applicableGlobalMiddlewares.length === 0 &&
           (!route.middlewares || route.middlewares.length === 0) &&
           !route.validator &&
+          !validateContract &&
           !route.staticServe;
 
         // Create handler based on route complexity
-        const handler = isSimpleRoute ? this.createFastPathHandler(route) : this.createRouteHandler(route);
+        const handler = isSimpleRoute
+          ? this.createFastPathHandler(route)
+          : this.createRouteHandler(route, validateContract, validationSteps);
 
         // Register handler to both path variants for trailing slash support
         if (method === 'ALL') {
@@ -1112,10 +1152,11 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       Promise.resolve(pending).then(toHandlerResponse, (error: unknown) => this.respondToError(error, context));
 
     const hasParams = route.path.includes(':');
+    const ContextClass = (route.contextClass ?? ErgenecoreContextWrapper) as typeof ErgenecoreContextWrapper;
 
     // Not `async`: a synchronous handler's Response goes back to Bun without a promise.
     return (req: Request): Response | Promise<Response> => {
-      const context = new ErgenecoreContextWrapper(req, this.server, route.path);
+      const context = new ContextClass(req, this.server, route.path);
 
       try {
         // @ts-expect-error - Bun adds params to Request
@@ -1149,7 +1190,11 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * @param route - Route parameters
    * @returns Bun-compatible route handler
    */
-  private createRouteHandler(route: RouteParams<Context, ValidationSchemaWithHook>) {
+  private createRouteHandler(
+    route: RouteParams<Context, ValidationSchemaWithHook>,
+    validateContract?: (context: Context) => Promise<void>,
+    validationSteps: ValidationStep[] = [],
+  ) {
     // ✅ Filter global middlewares by path pattern (ONCE during route building)
     // This happens at server startup, NOT on every request → zero runtime overhead
     const applicableGlobalMiddlewares = this.getGlobalMiddlewaresForPath(route.path);
@@ -1167,6 +1212,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     const joinsVerbatim =
       path.sep === '/' && typeof route.staticServe?.root === 'string' && path.isAbsolute(route.staticServe.root);
     const hasParams = route.path.includes(':');
+    const ContextClass = (route.contextClass ?? ErgenecoreContextWrapper) as typeof ErgenecoreContextWrapper;
 
     const serveRoute = (req: Request, context: Context): Response | Promise<Response> => {
       if (route.staticServe) {
@@ -1189,16 +1235,23 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       return this.runRouteHandler(route, context);
     };
 
-    const runRoute = route.validator
-      ? (req: Request, context: Context): Promise<Response> =>
-          this.validateRequest(context, route.validator).then(
-            (validationResult) => validationResult || serveRoute(req, context),
-          )
-      : serveRoute;
+    const runRoute =
+      validateContract || validationSteps.length > 0
+        ? async (req: Request, context: Context): Promise<Response> => {
+            if (validateContract) await validateContract(context);
+            if (validationSteps.length > 0) {
+              const validationResult = await this.validateRequest(context, validationSteps);
+
+              if (validationResult) return validationResult;
+            }
+
+            return serveRoute(req, context);
+          }
+        : serveRoute;
 
     return (req: Request): Response | Promise<Response> => {
       // Create context wrapper outside try block so it's accessible in catch
-      const context = new ErgenecoreContextWrapper(req, this.server, route.path);
+      const context = new ContextClass(req, this.server, route.path);
 
       // Inject Bun's native route params
       // @ts-expect-error - Bun adds params to Request
@@ -1289,6 +1342,50 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     return typeof schema === 'object' && schema !== null && 'schema' in schema;
   }
 
+  /** Prepare each legacy validator target once for this route, preserving method order. */
+  private async prepareValidationSteps(
+    route: RouteParams<Context, ValidationSchemaWithHook>,
+  ): Promise<ValidationStep[]> {
+    const steps: ValidationStep[] = [];
+    for (const target of VALIDATOR_METHODS) {
+      const handler: ValidatorHandler<ValidationSchemaWithHook | ValidationSchema> = route.validator[target];
+      if (!handler || typeof handler.handle !== 'function') continue;
+      const step: ValidationStep = {
+        target,
+        handle: () => handler.handle(),
+        extract: this.createValidationExtractor(target),
+        cachedResolved: route.validatorCache !== false,
+      };
+      if (route.validatorCache !== false) {
+        try {
+          const value = await step.handle();
+          if (value) step.prepared = this.unwrapValidationSchema(value);
+        } catch (error) {
+          throw new Error(`Failed to prepare validator for ${route.method.toUpperCase()} ${route.path} (${target})`, {
+            cause: error,
+          });
+        }
+      }
+      steps.push(step);
+    }
+    return steps;
+  }
+
+  private unwrapValidationSchema(value: ValidationSchemaWithHook | ValidationSchema): {
+    schema: ValidationSchema;
+    hook: ValidationSchemaWithHook['hook'] | null;
+  } {
+    const schema = this.isValidationSchemaWithHook(value) ? value.schema : value;
+    const hook = this.isValidationSchemaWithHook(value) ? (value.hook ?? null) : null;
+    if (!schema || typeof schema.safeParseAsync !== 'function') {
+      throw new TypeError('Validator factory must return a Zod schema with safeParseAsync()');
+    }
+    if (hook !== null && typeof hook !== 'function') {
+      throw new TypeError('Validator hook must be a function');
+    }
+    return { schema, hook };
+  }
+
   /**
    * Validates request data using Zod schemas
    *
@@ -1304,39 +1401,23 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * @param validator - Validator instance with schema definitions
    * @returns Response if validation fails, null if passes
    */
-  private async validateRequest(
-    context: Context,
-    validator: BaseValidator<ValidationSchemaWithHook | ValidationSchema>,
-  ): Promise<Response | null> {
-    // Iterate through all validator methods (body, query, param, header)
-    for (const key of VALIDATOR_METHODS) {
-      const validatorHandler: ValidatorHandler<ValidationSchemaWithHook | ValidationSchema> = validator[key];
-
-      // Skip if validator not defined for this target
-      if (!validatorHandler || typeof validatorHandler.handle !== 'function') {
-        continue;
-      }
-
-      // Get validation schema
-      const handled = validatorHandler.handle();
+  private async validateRequest(context: Context, steps: ValidationStep[]): Promise<Response | null> {
+    for (const { target: key, handle, extract, prepared, cachedResolved } of steps) {
+      const handled = cachedResolved ? undefined : handle();
       const validationSchema = isThenable(handled) ? await handled : handled;
 
       // Skip if no validation schema provided
-      if (!validationSchema) {
+      if ((!cachedResolved && !validationSchema) || (cachedResolved && !prepared)) {
         continue;
       }
 
       // Use type guard to discriminate between formats
-      const schema: ValidationSchema = this.isValidationSchemaWithHook(validationSchema)
-        ? validationSchema.schema
-        : validationSchema;
-
-      const hook = this.isValidationSchemaWithHook(validationSchema) ? (validationSchema.hook ?? null) : null;
+      const { schema, hook } = prepared ?? this.unwrapValidationSchema(validationSchema);
 
       // Extract data to validate
-      const data =
-        key === 'json' || key === 'body' ? await context.getBody() : await this.extractValidationData(context, key);
-      const result = schema.safeParse(data);
+      const extracted = extract(context);
+      const data = isThenable(extracted) ? await extracted : extracted;
+      const result = await schema.safeParseAsync(data);
 
       if (result.success) {
         // Body targets only: z.object() strips unknown keys and the raw form parse is
@@ -1372,81 +1453,66 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * @param target - Validation target (body, query, param, header, form)
    * @returns Data to be validated
    */
-  private async extractValidationData(context: Context, target: string): Promise<any> {
+  private createValidationExtractor(target: string): (context: Context) => Promise<any> | any {
     switch (target) {
       case 'json':
-        return await context.getBody();
-
-      case 'body': {
-        // 'json' is the correct Asena validator method name
-        // 'body' is kept for backwards compatibility
-        return await context.getBody();
-      }
+      case 'body':
+        return (context) => context.getBody();
 
       case 'query': {
-        const url = new URL(context.req.url);
-        const queryObj: Record<string, string> = {};
-
-        url.searchParams.forEach((value, key) => {
-          queryObj[key] = value;
-        });
-        return queryObj;
+        return (context) => {
+          const url = new URL(context.req.url);
+          const queryObj: Record<string, string> = {};
+          url.searchParams.forEach((value, key) => {
+            queryObj[key] = value;
+          });
+          return queryObj;
+        };
       }
 
       case 'param': {
-        // Extract all params from context
-        const params: Record<string, string> = {};
-
-        // We stored params with 'param:' prefix in context
-        for (const [key, value] of (context as any).values.entries()) {
-          if (key.startsWith('param:')) {
-            params[key.replace('param:', '')] = value;
+        return (context) => {
+          const params: Record<string, string> = {};
+          for (const [key, value] of (context as any).values.entries()) {
+            if (key.startsWith('param:')) params[key.replace('param:', '')] = value;
           }
-        }
-
-        return params;
+          return params;
+        };
       }
 
       case 'header': {
-        const headers: Record<string, string> = {};
-
-        context.req.headers.forEach((value, key) => {
-          headers[key.toLowerCase()] = value;
-        });
-        return headers;
+        return (context) => {
+          const headers: Record<string, string> = {};
+          context.req.headers.forEach((value, key) => {
+            headers[key.toLowerCase()] = value;
+          });
+          return headers;
+        };
       }
 
       case 'form': {
-        const contentType = context.req.headers.get('content-type') ?? '';
-
-        // hono parity: non-form content-type validates {} (a required field then fails),
-        // instead of feeding JSON into a form schema
-        if (
-          !contentType.includes('multipart/form-data') &&
-          !contentType.includes('application/x-www-form-urlencoded')
-        ) {
-          return {};
-        }
-
-        const formData = await context.getFormData();
-        const form: Record<string, any> = Object.create(null);
-        formData.forEach((value, key) => {
-          if (key.endsWith('[]')) {
-            (form[key] ??= []).push(value);
-          } else if (Array.isArray(form[key])) {
-            form[key].push(value);
-          } else if (Object.hasOwn(form, key)) {
-            form[key] = [form[key], value];
-          } else {
-            form[key] = value;
+        return async (context) => {
+          const contentType = context.req.headers.get('content-type') ?? '';
+          if (
+            !contentType.includes('multipart/form-data') &&
+            !contentType.includes('application/x-www-form-urlencoded')
+          ) {
+            return {};
           }
-        });
-
-        return form;
+          const formData = await context.getFormData();
+          const form: Record<string, any> = Object.create(null);
+          formData.forEach((value, key) => {
+            if (key.endsWith('[]')) (form[key] ??= []).push(value);
+            else if (Array.isArray(form[key])) form[key].push(value);
+            else if (Object.hasOwn(form, key)) form[key] = [form[key], value];
+            else form[key] = value;
+          });
+          return form;
+        };
       }
 
       default:
-        return {};
+        return () => ({});
     }
   }
 

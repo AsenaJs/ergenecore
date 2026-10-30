@@ -128,8 +128,8 @@ describe('CoreAdapter', () => {
   });
 
   describe('buildBunRoutes', () => {
-    it('should build routes object with 404 handler when no routes queued', () => {
-      const bunRoutes = adapter['buildBunRoutes']();
+    it('should build routes object with 404 handler when no routes queued', async () => {
+      const bunRoutes = await adapter['buildBunRoutes']();
 
       // Even with no routes, should have 404 handler
       expect(bunRoutes['/*']).toBeDefined();
@@ -148,7 +148,7 @@ describe('CoreAdapter', () => {
         handler,
       });
 
-      const bunRoutes = adapter['buildBunRoutes']();
+      const bunRoutes = await adapter['buildBunRoutes']();
 
       expect(bunRoutes['/test']).toBeDefined();
       expect(bunRoutes['/test'].GET).toBeDefined();
@@ -177,7 +177,7 @@ describe('CoreAdapter', () => {
         handler: postHandler,
       });
 
-      const bunRoutes = adapter['buildBunRoutes']();
+      const bunRoutes = await adapter['buildBunRoutes']();
 
       expect(bunRoutes['/users']).toBeDefined();
       expect(bunRoutes['/users'].GET).toBeDefined();
@@ -206,7 +206,7 @@ describe('CoreAdapter', () => {
         handler: handler2,
       });
 
-      const bunRoutes = adapter['buildBunRoutes']();
+      const bunRoutes = await adapter['buildBunRoutes']();
 
       expect(bunRoutes['/users']).toBeDefined();
       expect(bunRoutes['/posts']).toBeDefined();
@@ -224,7 +224,7 @@ describe('CoreAdapter', () => {
         handler,
       });
 
-      const bunRoutes = adapter['buildBunRoutes']();
+      const bunRoutes = await adapter['buildBunRoutes']();
 
       expect(bunRoutes['/users/:id']).toBeDefined();
       expect(bunRoutes['/users/:id'].GET).toBeDefined();
@@ -242,7 +242,7 @@ describe('CoreAdapter', () => {
         handler,
       });
 
-      const bunRoutes = adapter['buildBunRoutes']();
+      const bunRoutes = await adapter['buildBunRoutes']();
 
       expect(bunRoutes['/static/*']).toBeDefined();
     });

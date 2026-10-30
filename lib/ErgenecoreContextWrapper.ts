@@ -1,3 +1,11 @@
+import {
+  ValidatedInput,
+  readContractBody,
+  readContractForm,
+  type InputMap,
+  type InputOutput,
+  type InputTarget,
+} from '@asenajs/asena/adapter';
 import type { Server } from 'bun';
 import type {
   AsenaContext,
@@ -63,8 +71,49 @@ function scanQuery(query: string, name: string): string | undefined {
  * This wrapper provides a framework-agnostic API for handling HTTP requests and responses,
  * allowing Asena to work with different adapters without changing user code.
  */
-export class ErgenecoreContextWrapper implements AsenaContext<Request, Response> {
+export class ErgenecoreContextWrapper<I extends InputMap = Record<never, never>> implements AsenaContext<
+  Request,
+  Response
+> {
   declare public routePattern?: string;
+
+  declare private _validatedInput?: ValidatedInput<I>;
+
+  private get validatedInput(): ValidatedInput<I> {
+    return (this._validatedInput ??= new ValidatedInput<I>());
+  }
+
+  public get input(): Readonly<I> {
+    return this.validatedInput.input;
+  }
+
+  /** @internal */
+  public setValidated(target: InputTarget, value: unknown): void {
+    this.validatedInput.set(target, value);
+  }
+
+  /** @internal */
+  public completeValidatedInput(): void {
+    this.validatedInput.complete();
+  }
+
+  /** @internal */
+  public readContractInput(target: InputTarget): Promise<unknown> | unknown {
+    switch (target) {
+      case 'body':
+        return readContractBody(() => this.readRawBody(), this.request.headers.get('content-type') ?? '');
+      case 'form':
+        return readContractForm(() => this.getFormData(), this.request.headers.get('content-type') ?? '');
+      case 'query':
+        return this.getAllQueries();
+      case 'headers':
+        return this.headers;
+      case 'params':
+        return Object.fromEntries(
+          [...this.values].filter(([key]) => key.startsWith('param:')).map(([key, value]) => [key.slice(6), value]),
+        );
+    }
+  }
 
   declare private readonly request: Request;
 
@@ -259,7 +308,8 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
    * keys into arrays and applied coercions, while the raw parse below is last-value-wins.
    * Routes without a form validator keep the raw shape.
    */
-  public async getParseBody(): Promise<any> {
+  public async getParseBody<T = 'form' extends keyof I ? I['form'] : any>(): Promise<T> {
+    if (this._validatedInput?.has('form')) return this._validatedInput.get('form') as T;
     if (this.formValidated) {
       return this.validatedForm;
     }
@@ -274,7 +324,7 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
         result[key] = value;
       });
 
-      return result;
+      return result as T;
     }
 
     return await this.getBody();
@@ -358,7 +408,8 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
    * const body = await context.getBody(); // throws HttpException(400)
    * ```
    */
-  public getBody<T>(): Promise<T> {
+  public getBody<T = InputOutput<I, 'body'>>(): Promise<T> {
+    if (this._validatedInput?.has('body')) return Promise.resolve(this._validatedInput.get('body') as T);
     // Cache body after first read to allow multiple accesses
     // (Request body stream can only be read once)
     if (this.bodyRead) {

@@ -54,7 +54,11 @@ export { RateLimiterMiddleware, type RateLimiterOptions } from './middlewares/Ra
 export { WebSocketOriginMiddleware, type WebSocketOriginOptions } from './middlewares/WebSocketOriginMiddleware';
 
 // Types
-export type { Context } from './ErgenecoreContextWrapper';
+import type { Context as AdapterContext } from './ErgenecoreContextWrapper';
+export type Context = AdapterContext;
+import { defineContext } from './defineContext';
+export const Context = { define: defineContext };
+export type { DefinedContext } from './defineContext';
 export type { ErgenecoreHandler, ErgenecoreNext } from './types/Handler';
 export type { StaticServeExtras } from './types/StaticServeExtras';
 export type { ValidationSchema, ValidationSchemaWithHook } from './types/Validation';
