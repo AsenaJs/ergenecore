@@ -1156,7 +1156,13 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
     // Not `async`: a synchronous handler's Response goes back to Bun without a promise.
     return (req: Request): Response | Promise<Response> => {
-      const context = new ContextClass(req, this.server, route.path);
+      let context: Context;
+
+      try {
+        context = new ContextClass(req, this.server, route.path);
+      } catch (error) {
+        return this.respondToError(error, new ErgenecoreContextWrapper(req, this.server, route.path));
+      }
 
       try {
         // @ts-expect-error - Bun adds params to Request
@@ -1250,8 +1256,13 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         : serveRoute;
 
     return (req: Request): Response | Promise<Response> => {
-      // Create context wrapper outside try block so it's accessible in catch
-      const context = new ContextClass(req, this.server, route.path);
+      let context: Context;
+
+      try {
+        context = new ContextClass(req, this.server, route.path);
+      } catch (error) {
+        return this.respondToError(error, new ErgenecoreContextWrapper(req, this.server, route.path));
+      }
 
       // Inject Bun's native route params
       // @ts-expect-error - Bun adds params to Request
