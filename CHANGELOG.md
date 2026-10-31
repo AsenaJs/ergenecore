@@ -1,5 +1,24 @@
 # @asenajs/ergenecore
 
+## 5.0.0
+
+### Major Changes
+
+- 88c329d: **Breaking:** `RateLimiterMiddleware` identifies the client by the connecting peer address (`context.getRequestIp()`) instead of `X-Forwarded-For` / `CF-Connecting-IP`, which any client could set to get a fresh bucket per request. Behind a reverse proxy set the new `trustProxy` option (`true` for one proxy layer or a unix-socket listener, `string[]` of proxy addresses, or a predicate); the client is the rightmost `X-Forwarded-For` entry not written by a trusted proxy, so a forged left entry is never used. `CF-Connecting-IP` is no longer consulted (Cloudflare also appends to `X-Forwarded-For`; use a `keyGenerator` if you need it). Headers over 1024 characters are ignored. New `maxBuckets` (default 10000) bounds memory: the least recently seen client is evicted and starts with a full bucket.
+
+  Two `trustProxy` misconfigurations put every client in one bucket: `true` behind two or more proxy layers (the outer proxy becomes the key; list every proxy instead), and a trusted peer that sends no usable `X-Forwarded-For` (the peer becomes the key; a warning is logged once).
+
+- 5508080: Add Standard Schema route context subclasses with validated, typed request input. The adapter validates body, form, query, params, and headers after middleware and preserves transformed outputs in each request's context. Legacy validator schemas are prepared once per route by default; set `validatorCache: false` on a route that needs its schema factory to run for every request. Require `@asenajs/asena` ^0.12.0 for the shared route contract API.
+
+### Minor Changes
+
+- ae1e76f: `@asenajs/asena` 0.12.x is now an accepted peer. No behaviour change.
+- c151569: Adds `WebSocketOriginMiddleware`: rejects a WebSocket handshake with 403 unless the `Origin` header is in `allowedOrigins` (list or predicate). Handshakes without an `Origin` are rejected too unless `allowMissingOrigin: true`. `CorsMiddleware` is not an origin policy — a disallowed origin still upgrades — so cookie-authenticated WebSockets need this middleware in front of their auth.
+
+### Patch Changes
+
+- 4c01402: Faster request handling: routes without middleware skip the middleware chain, synchronous handlers answer without an extra promise, query parsing is memoized, and static files are served through a bounded table of open file descriptors with a fresh stat on every request.
+
 ## 4.0.0
 
 ### Major Changes
