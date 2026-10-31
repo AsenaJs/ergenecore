@@ -1,5 +1,11 @@
 # @asenajs/ergenecore
 
+## 5.0.1
+
+### Patch Changes
+
+- 41ef48b: `setValue` now rejects a wrong value for a key declared on `AsenaVariables` (including the built-in `authSession`). The untyped fallback overload no longer matches known keys, matching the core `AsenaContext` contract.
+
 ## 5.0.0
 
 ### Major Changes
