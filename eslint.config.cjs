@@ -31,6 +31,7 @@ module.exports = tseslint.config(
       '*.md',
       'examples/**', // Adapter project: example applications
       'benchmark/**', // Adapter project: benchmark files
+      'typespec/**', // Strict declaration consumer fixture uses its own tsconfig
     ],
   },
 

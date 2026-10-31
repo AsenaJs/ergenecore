@@ -51,6 +51,12 @@ import type { Context } from '../ErgenecoreContextWrapper';
 import { MiddlewareService } from '../defaults';
 import { OnStop } from '@asenajs/asena/decorators/ioc';
 
+const MAX_FORWARDED_HEADER_LENGTH = 1024;
+
+const IPV4_MAPPED_PREFIX = /^::ffff:(?=\d{1,3}(?:\.\d{1,3}){3}$)/i;
+
+const unmapIPv4 = (address: string): string => address.replace(IPV4_MAPPED_PREFIX, '');
+
 /**
  * Token bucket for a single client
  */
@@ -98,10 +104,11 @@ export interface RateLimiterOptions {
   /**
    * Custom key generator function
    *
-   * By default, uses IP address from X-Forwarded-For header or remote address.
+   * By default, identifies the client by the connecting peer, or by the client hop of
+   * `X-Forwarded-For` when `trustProxy` trusts the peer.
    * You can customize this to use user ID, API key, or any other identifier.
    *
-   * @default (ctx) => ctx.req.headers.get('x-forwarded-for') || 'unknown'
+   * @default (ctx) => ctx.getRequestIp() ?? 'unknown'
    *
    * @example
    * ```typescript
@@ -113,6 +120,40 @@ export interface RateLimiterOptions {
    * ```
    */
   keyGenerator?: (context: Context) => string;
+
+  /**
+   * Which connecting peers are reverse proxies whose `X-Forwarded-For` may be believed.
+   *
+   * - `false` (default): the connecting peer (`getRequestIp()`) is the client; the header is ignored.
+   * - `true`: one proxy layer in front of the server. The header is read and its rightmost entry - the
+   *   one the proxy appended - is the client. Also the right setting when the server listens on a unix
+   *   socket (no peer address to check).
+   * - `string[]`: exact addresses of the trusted proxies. An IPv4 address matches whether it is written
+   *   plain (`'10.0.0.1'`) or IPv4-mapped (`'::ffff:10.0.0.1'`, how Bun reports it on a dual-stack
+   *   listener), in the list, the peer and the forwarded hops alike. Entries are walked from the right;
+   *   the first one not in the list is the client.
+   * - `(address) => boolean`: same walk with a predicate (CIDR checks live here).
+   *
+   * A hop the client wrote itself (`X-Forwarded-For: <forged>, <real>`) is never selected: selection
+   * starts from the right and stops at the first untrusted address.
+   *
+   * Both misconfigurations below fail closed - every client lands in one bucket:
+   * - `true` behind two or more proxy layers keys on the outer proxy (the rightmost hop); list every
+   *   proxy, or use a predicate, instead.
+   * - A trusted peer that sends no usable `X-Forwarded-For` keys on the peer itself; logged once.
+   *
+   * @default false
+   */
+  trustProxy?: boolean | string[] | ((address: string) => boolean);
+
+  /**
+   * Upper bound on distinct client buckets held in memory. When a new client arrives at the cap, the
+   * least recently seen bucket is evicted - that client starts over with a full bucket.
+   * Must be a positive integer; the constructor throws otherwise.
+   *
+   * @default 10000
+   */
+  maxBuckets?: number;
 
   /**
    * Custom message for rate limit exceeded response
@@ -251,6 +292,16 @@ export class RateLimiterMiddleware extends MiddlewareService {
   private readonly keyGenerator: (context: Context) => string;
 
   /**
+   * Trusted reverse proxies whose `X-Forwarded-For` may be believed
+   */
+  private readonly trustProxy: boolean | string[] | ((address: string) => boolean);
+
+  /**
+   * Upper bound on distinct client buckets held in memory
+   */
+  private readonly maxBuckets: number;
+
+  /**
    * Rate limit exceeded message
    */
   private readonly message: string;
@@ -280,6 +331,8 @@ export class RateLimiterMiddleware extends MiddlewareService {
    */
   private readonly bucketTTL: number;
 
+  private warnedNoForwardedFor = false;
+
   /**
    * Creates a new rate limiter middleware instance
    *
@@ -308,6 +361,13 @@ export class RateLimiterMiddleware extends MiddlewareService {
     this.capacity = options.capacity ?? 100;
     this.refillRate = options.refillRate ?? 10;
     this.keyGenerator = options.keyGenerator ?? this.defaultKeyGenerator;
+    this.trustProxy = options.trustProxy ?? false;
+    this.maxBuckets = options.maxBuckets ?? 10_000;
+
+    if (!Number.isInteger(this.maxBuckets) || this.maxBuckets < 1) {
+      throw new Error(`RateLimiterMiddleware: maxBuckets must be a positive integer, got ${this.maxBuckets}`);
+    }
+
     this.message = options.message ?? 'Rate limit exceeded. Please try again later.';
     this.statusCode = options.statusCode ?? 429;
     this.cost = options.cost ?? 1;
@@ -349,13 +409,20 @@ export class RateLimiterMiddleware extends MiddlewareService {
     // Get or create bucket
     let bucket = this.buckets.get(key);
 
-    if (!bucket) {
+    if (bucket) {
+      this.buckets.delete(key);
+    } else {
       bucket = {
         tokens: this.capacity,
         lastRefill: Date.now(),
       };
-      this.buckets.set(key, bucket);
+
+      if (this.buckets.size >= this.maxBuckets) {
+        this.buckets.delete(this.buckets.keys().next().value);
+      }
     }
+
+    this.buckets.set(key, bucket);
 
     // Refill tokens based on elapsed time
     const now = Date.now();
@@ -439,19 +506,96 @@ export class RateLimiterMiddleware extends MiddlewareService {
   }
 
   /**
-   * Default key generator - uses X-Forwarded-For or falls back to 'unknown'
+   * Default key generator - the connecting peer, see `trustProxy`
    *
    * @param context - Ergenecore context
    * @returns Client identifier
    */
   private defaultKeyGenerator = (context: Context): string => {
-    return (
-      context.req.headers.get('x-forwarded-for') ||
-      context.req.headers.get('cf-connecting-ip') ||
-      context.getRequestIp?.() ||
-      'unknown'
-    );
+    return this.resolveClientKey(context);
   };
+
+  /**
+   * Resolve the client identifier: the connecting peer, or the client hop of `X-Forwarded-For`
+   * when the peer is a trusted proxy
+   *
+   * @param context - Ergenecore context
+   * @returns Client identifier
+   */
+  private resolveClientKey(context: Context): string {
+    const peer = context.getRequestIp();
+
+    if (!this.trusts(peer)) {
+      return peer ?? 'unknown';
+    }
+
+    const hops = this.forwardedHops(context);
+
+    if (!hops.length) {
+      this.warnNoForwardedFor(peer);
+
+      return peer ?? 'unknown';
+    }
+
+    for (let i = hops.length - 1; i >= 0; i--) {
+      if (!this.trusts(hops[i])) {
+        return hops[i];
+      }
+    }
+
+    return hops.at(-1);
+  }
+
+  /**
+   * Warn, once per instance, that a trusted peer forwarded no usable `X-Forwarded-For`
+   *
+   * @param peer - The trusted peer address
+   */
+  private warnNoForwardedFor(peer: string | null): void {
+    if (this.warnedNoForwardedFor) return;
+
+    this.warnedNoForwardedFor = true;
+    console.warn(
+      `RateLimiterMiddleware: trusted proxy ${peer ?? '(no peer address)'} sent no usable X-Forwarded-For; ` +
+        'every client behind it shares one bucket. Make the proxy append X-Forwarded-For or narrow trustProxy.',
+    );
+  }
+
+  /**
+   * Whether an address is a reverse proxy whose forwarded hops may be believed
+   *
+   * @param address - Peer or forwarded hop address
+   * @returns True when the address is trusted
+   */
+  private trusts(address: string | null): boolean {
+    if (this.trustProxy === true) return true;
+    if (!this.trustProxy || address === null) return false;
+
+    if (!Array.isArray(this.trustProxy)) return this.trustProxy(address);
+
+    const normalized = unmapIPv4(address);
+
+    return this.trustProxy.some((entry) => unmapIPv4(entry) === normalized);
+  }
+
+  /**
+   * Parse `X-Forwarded-For` into its hops, left to right
+   *
+   * @param context - Ergenecore context
+   * @returns The forwarded hops, or an empty list when the header is absent or over-long
+   */
+  private forwardedHops(context: Context): string[] {
+    const header = context.req.headers.get('x-forwarded-for');
+
+    if (!header || header.length > MAX_FORWARDED_HEADER_LENGTH) {
+      return [];
+    }
+
+    return header
+      .split(',')
+      .map((hop) => hop.trim())
+      .filter(Boolean);
+  }
 
   /**
    * Setup automatic cleanup of inactive buckets

@@ -1,3 +1,11 @@
+import {
+  ValidatedInput,
+  readContractBody,
+  readContractForm,
+  type InputMap,
+  type InputOutput,
+  type InputTarget,
+} from '@asenajs/asena/adapter';
 import type { Server } from 'bun';
 import type {
   AsenaContext,
@@ -16,65 +24,169 @@ import { StreamWriter } from './stream';
  */
 export type Context = ErgenecoreContextWrapper;
 
+const JSON_HEADERS = new Headers({ 'Content-Type': 'application/json' });
+
+const JSON_INIT: ResponseInit = { headers: JSON_HEADERS };
+
+const UTF8_DECODER = new TextDecoder();
+
+const QUERY_NEEDS_DECODING = /[^ -$&-*,-~]/;
+
+function invalidJsonBody(error: unknown): HttpException {
+  return new HttpException(400, {
+    error: 'Invalid JSON in request body',
+    message: error instanceof Error ? error.message : 'Failed to parse JSON',
+  });
+}
+
+function scanQuery(query: string, name: string): string | undefined {
+  const length = query.length;
+  const nameLength = name.length;
+  let start = 0;
+
+  while (start < length) {
+    let end = query.indexOf('&', start);
+
+    if (end === -1) end = length;
+
+    if (end > start) {
+      let eq = query.indexOf('=', start);
+
+      if (eq === -1 || eq > end) eq = end;
+
+      if (eq - start === nameLength && query.startsWith(name, start)) {
+        return eq === end ? '' : query.slice(eq + 1, end);
+      }
+    }
+
+    start = end + 1;
+  }
+
+  return undefined;
+}
+
 /**
  * CoreContextWrapper wraps Bun's native Request/Response to implement Asena's AsenaContext interface
  *
  * This wrapper provides a framework-agnostic API for handling HTTP requests and responses,
  * allowing Asena to work with different adapters without changing user code.
  */
-export class ErgenecoreContextWrapper implements AsenaContext<Request, Response> {
-  public routePattern?: string;
+export class ErgenecoreContextWrapper<I extends InputMap = Record<never, never>> implements AsenaContext<
+  Request,
+  Response
+> {
+  declare public routePattern?: string;
 
-  private readonly request: Request;
+  declare private _validatedInput?: ValidatedInput<I>;
 
-  private _url?: URL;
+  private get validatedInput(): ValidatedInput<I> {
+    return (this._validatedInput ??= new ValidatedInput<I>());
+  }
 
-  private _values?: Map<string, any>;
+  public get input(): Readonly<I> {
+    return this.validatedInput.input;
+  }
 
-  private bodyCache: any = undefined;
+  /** @internal */
+  public setValidated(target: InputTarget, value: unknown): void {
+    this.validatedInput.set(target, value);
+  }
 
-  private bodyRead = false;
+  /** @internal */
+  public completeValidatedInput(): void {
+    this.validatedInput.complete();
+  }
 
-  private formDataCache?: FormData;
+  /** @internal */
+  public readContractInput(target: InputTarget): Promise<unknown> | unknown {
+    switch (target) {
+      case 'body':
+        return readContractBody(() => this.readRawBody(), this.request.headers.get('content-type') ?? '');
+      case 'form':
+        return readContractForm(() => this.getFormData(), this.request.headers.get('content-type') ?? '');
+      case 'query':
+        return this.getAllQueries();
+      case 'headers':
+        return this.headers;
+      case 'params':
+        return Object.fromEntries(
+          [...this.values].filter(([key]) => key.startsWith('param:')).map(([key, value]) => [key.slice(6), value]),
+        );
+    }
+  }
 
-  private rawBodyCache?: Promise<ArrayBuffer>;
+  declare private readonly request: Request;
 
-  private contentTypeCache?: string;
+  declare private _searchParams?: URLSearchParams;
 
-  private validatedForm: any = undefined;
+  declare private _plainQuery?: string;
 
-  private formValidated = false;
+  declare private _status?: number;
+
+  declare private _values?: Map<string, any>;
+
+  declare private _params?: Record<string, string>;
+
+  declare private bodyCache: any;
+
+  declare private bodyRead?: boolean;
+
+  declare private formDataCache?: FormData;
+
+  declare private rawBodyCache?: Promise<ArrayBuffer>;
+
+  declare private contentTypeCache?: string;
+
+  declare private validatedForm: any;
+
+  declare private formValidated?: boolean;
 
   /**
    * Lazy-initialized mock Response object
    * Only created when context.res is accessed (e.g., by middlewares setting headers)
    */
-  private _mockResponse?: {
+  declare private _mockResponse?: {
     headers: Map<string, string>;
     status?: number;
   };
 
-  private _server?: Server<never>;
+  declare private _server?: Server<never>;
 
-  private _requestIp?: string | null;
+  declare private _requestIp?: string | null;
 
-  public constructor(request: Request, server?: Server<never>) {
+  public constructor(request: Request, server?: Server<never>, routePattern?: string) {
+    this.routePattern = routePattern;
     this.request = request;
     this._server = server;
   }
 
   /**
-   * Lazy-initialized URL getter
+   * Lazy-initialized query parameters
    *
-   * URL object is only created when actually accessed, saving allocation
-   * for routes that don't use query parameters.
+   * `Request.url` is already a serialized URL, so its query is everything between the first
+   * `?` and the fragment - the same input `URL.searchParams` would parse.
    */
-  private get url(): URL {
-    if (!this._url) {
-      this._url = new URL(this.request.url);
+  private get searchParams(): URLSearchParams {
+    if (!this._searchParams) {
+      const query = this.rawQuery();
+
+      this._searchParams = query === undefined ? new URLSearchParams() : new URLSearchParams(query);
     }
 
-    return this._url;
+    return this._searchParams;
+  }
+
+  private rawQuery(): string | undefined {
+    const url = this.request.url;
+    const queryStart = url.indexOf('?');
+
+    if (queryStart === -1) {
+      return undefined;
+    }
+
+    const hashStart = url.indexOf('#', queryStart + 1);
+
+    return hashStart === -1 ? url.slice(queryStart + 1) : url.slice(queryStart + 1, hashStart);
   }
 
   /**
@@ -85,10 +197,33 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
    */
   private get values(): Map<string, any> {
     if (!this._values) {
-      this._values = new Map<string, any>();
+      const values = new Map<string, any>();
+      const params = this._params;
+
+      if (params) {
+        for (const key in params) {
+          values.set(`param:${key}`, params[key]);
+        }
+      }
+
+      this._values = values;
     }
 
     return this._values;
+  }
+
+  /**
+   * Internal: route params resolved by Bun's router, exposed through `getParam()` and as
+   * `param:<name>` entries of the values store.
+   */
+  public setRouteParams(params: Record<string, string>): void {
+    if (this._values) {
+      for (const key in params) {
+        this._values.set(`param:${key}`, params[key]);
+      }
+    } else {
+      this._params = params;
+    }
   }
 
   /**
@@ -109,6 +244,10 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
       this._mockResponse = {
         headers: new Map<string, string>(),
       };
+
+      if (this._status !== undefined) {
+        this._mockResponse.status = this._status;
+      }
     }
 
     return this._mockResponse;
@@ -121,7 +260,7 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
     const headersObj: Record<string, string> = {};
 
     this.request.headers.forEach((value, key) => {
-      headersObj[key.toLowerCase()] = value;
+      headersObj[key] = value;
     });
 
     return headersObj;
@@ -139,7 +278,11 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
     if (this.rawBodyCache === undefined) {
       // Bun derives the content-type of an in-process Request from its FormData/Blob body and
       // drops it once that body is consumed, so it has to be read before the read below.
-      this.contentTypeCache = this.request.headers.get('content-type') ?? '';
+      // A request from Bun.serve() carries it as a real header that survives the read.
+      if (this._server === undefined) {
+        this.contentTypeCache = this.request.headers.get('content-type') ?? '';
+      }
+
       this.rawBodyCache = this.request.arrayBuffer();
     }
 
@@ -165,7 +308,8 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
    * keys into arrays and applied coercions, while the raw parse below is last-value-wins.
    * Routes without a form validator keep the raw shape.
    */
-  public async getParseBody(): Promise<any> {
+  public async getParseBody<T = 'form' extends keyof I ? I['form'] : any>(): Promise<T> {
+    if (this._validatedInput?.has('form')) return this._validatedInput.get('form') as T;
     if (this.formValidated) {
       return this.validatedForm;
     }
@@ -180,7 +324,7 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
         result[key] = value;
       });
 
-      return result;
+      return result as T;
     }
 
     return await this.getBody();
@@ -230,7 +374,13 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
    * Parameters are stored in the values map by the router
    */
   public getParam(name: string): string {
-    return this.values.get(`param:${name}`) || '';
+    if (this._values || !this._params) {
+      return this.values.get(`param:${name}`) || '';
+    }
+
+    const value = this._params[name];
+
+    return typeof value === 'string' ? value : '';
   }
 
   /**
@@ -258,35 +408,44 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
    * const body = await context.getBody(); // throws HttpException(400)
    * ```
    */
-  public async getBody<T>(): Promise<T> {
+  public getBody<T = InputOutput<I, 'body'>>(): Promise<T> {
+    if (this._validatedInput?.has('body')) return Promise.resolve(this._validatedInput.get('body') as T);
     // Cache body after first read to allow multiple accesses
     // (Request body stream can only be read once)
     if (this.bodyRead) {
-      return this.bodyCache as T;
+      return Promise.resolve(this.bodyCache as T);
     }
+
+    let raw: Promise<ArrayBuffer>;
 
     try {
-      // Get raw text first to check if body is empty
-      const text = new TextDecoder().decode(await this.readRawBody());
-
-      // Empty body is valid - return empty object
-      if (!text || text.trim() === '') {
-        this.bodyCache = {};
-        this.bodyRead = true;
-        return this.bodyCache as T;
-      }
-
-      // Parse JSON
-      this.bodyCache = JSON.parse(text);
-      this.bodyRead = true;
-      return this.bodyCache as T;
+      raw = this.readRawBody();
     } catch (error) {
-      // JSON parsing failed - throw HttpException (industry standard)
-      throw new HttpException(400, {
-        error: 'Invalid JSON in request body',
-        message: error instanceof Error ? error.message : 'Failed to parse JSON',
-      });
+      return Promise.reject(invalidJsonBody(error));
     }
+
+    return raw.then(
+      (buffer) => {
+        let parsed: any;
+
+        try {
+          const text = UTF8_DECODER.decode(buffer);
+
+          // Empty body is valid - return empty object
+          parsed = !text || text.trim() === '' ? {} : JSON.parse(text);
+        } catch (error) {
+          throw invalidJsonBody(error);
+        }
+
+        this.bodyCache = parsed;
+        this.bodyRead = true;
+
+        return parsed as T;
+      },
+      (error) => {
+        throw invalidJsonBody(error);
+      },
+    );
   }
 
   /**
@@ -327,15 +486,37 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
    *
    * Returns `undefined` when the parameter is absent, `''` when it is present but empty (`?name=`).
    */
-  public async getQuery(name: string): Promise<string | undefined> {
-    return this.url.searchParams.get(name) ?? undefined;
+  public getQuery(name: string): Promise<string | undefined> {
+    try {
+      return Promise.resolve(this.readQuery(name));
+    } catch (error) {
+      return Promise.reject(error as Error);
+    }
+  }
+
+  private readQuery(name: string): string | undefined {
+    if (this._plainQuery !== undefined) {
+      return scanQuery(this._plainQuery, name);
+    }
+
+    if (!this._searchParams) {
+      const query = this.rawQuery() ?? '';
+
+      if (!QUERY_NEEDS_DECODING.test(query)) {
+        this._plainQuery = query;
+
+        return scanQuery(query, name);
+      }
+    }
+
+    return this.searchParams.get(name) ?? undefined;
   }
 
   /**
    * Get all values for a query parameter (for array query params)
    */
   public async getQueryAll(name: string): Promise<string[]> {
-    return this.url.searchParams.getAll(name);
+    return this.searchParams.getAll(name);
   }
 
   /**
@@ -344,7 +525,7 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
   public getAllQueries(): Record<string, string | string[]> {
     const result: Record<string, string | string[]> = {};
 
-    for (const [key, value] of this.url.searchParams.entries()) {
+    for (const [key, value] of this.searchParams.entries()) {
       if (key in result) {
         const existing = result[key];
 
@@ -439,6 +620,33 @@ export class ErgenecoreContextWrapper implements AsenaContext<Request, Response>
    * Automatically merges headers set by middlewares via setResponseHeader()
    */
   public send(data: string | any, statusOrOptions?: SendOptions | number): Response {
+    if (
+      (statusOrOptions === undefined || typeof statusOrOptions === 'number') &&
+      (!this._mockResponse || this._mockResponse.headers.size === 0)
+    ) {
+      const status = (statusOrOptions as number | undefined) ?? 200;
+
+      if (this._mockResponse) {
+        this._mockResponse.status = status;
+      } else {
+        this._status = status;
+      }
+
+      if (status === 200) {
+        if (typeof data === 'string') {
+          return new Response(data);
+        }
+
+        return new Response(JSON.stringify(data), JSON_INIT);
+      }
+
+      if (typeof data === 'string') {
+        return new Response(data, { status });
+      }
+
+      return new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
+    }
+
     const { headers = {}, status = 200 } =
       typeof statusOrOptions === 'number' ? { status: statusOrOptions } : statusOrOptions || {};
 
