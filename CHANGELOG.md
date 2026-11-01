@@ -1,5 +1,31 @@
 # @asenajs/ergenecore
 
+## 5.0.3
+
+### Patch Changes
+
+- 1775a9a: Code a middleware runs after `await next()` now runs. `next()` resolves once the rest of the chain has answered instead of
+  throwing the downstream `Response` past the caller, so a header set on `context.res` after `next()` reaches the response, an
+  error thrown after `next()` goes to `onError`, and `context.res.status` read after `next()` is the status that was produced,
+  on matched and unmatched routes alike.
+
+  Behaviour that changes with it: when a route has middlewares, an error thrown by the handler or by request validation is
+  answered through `onError` before `next()` resolves, so a middleware's `try/catch` around `next()` no longer sees it and reads
+  the error response's status instead. A middleware that returns a `Response` or `false` without calling `next()` still ends the
+  chain as before.
+
+- bbbd491: A route registered with a `contextContract` that has no `contextClass`, or that does not match its `contextClass`, is now
+  rejected by core's shared route-contract check, so the error reads `<METHOD> <path>: contextContract must match contextClass`,
+  the same message the Hono adapter gives. Registration is still rejected in both cases; only the message text changed.
+- 4ef04f0: A static request whose path decodes to a NUL byte (for example `/static/a%00.txt`) now ends as a static miss - the route's
+  `onNotFound` hook, then the application's `onNotFound` or the default 404 - instead of a 500 from `onError`.
+- a3d22cc: A route registered at top-level `/*` (for example `@Controller('/')` with `@Get('/*')`, or the single-page-app static route
+  from the static files guide) now answers its requests. Previously the adapter's own unmatched handler replaced it and every
+  such request ended in a 404. Methods the `/*` route does not register still go through the usual not-found handling - global
+  middlewares, CORS preflight and `onNotFound` - and a `HEAD` request is answered by the route's `GET`. Global middlewares
+  scoped with `include` / `exclude` are matched against the request path on a top-level `/*` route, so a middleware included
+  for `/api/*` runs for `GET /api/private` served by that route.
+
 ## 5.0.2
 
 ### Patch Changes
