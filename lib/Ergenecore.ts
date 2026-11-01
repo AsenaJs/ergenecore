@@ -1629,12 +1629,14 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
     try {
       file = Bun.file(resolvedFilePath);
+
+      if (!(await file.exists())) file = undefined;
     } catch {
       file = undefined;
     }
 
     // 6. File not found → trigger onNotFound hook
-    if (file === undefined || !(await file.exists())) {
+    if (file === undefined) {
       if (staticServe.onNotFound) {
         await staticServe.onNotFound.handler(rewrittenPath, context);
 
