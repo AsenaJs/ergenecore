@@ -152,10 +152,6 @@ describe('onNotFound', () => {
  * around `await next()`, so every 404 this server answered was recorded with no
  * `http.response.status_code` - bots, probes and mistyped paths, the traffic an operator most
  * wants to count, all landing in the same shapeless bucket.
- *
- * `finally`, not a plain statement after `await next()`, is deliberate and is what the real
- * consumer does: a terminal Response propagates out of `next()` as a `MiddlewareResponseError`,
- * so any observation not in a `finally` is skipped on *every* request, matched or not.
  */
 describe('the unmatched-route status is recorded on the context', () => {
   let adapter: Ergenecore;

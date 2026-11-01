@@ -25,7 +25,7 @@ import type { Server } from 'bun';
 import * as Bun from 'bun';
 import * as path from 'path';
 import type { StaticServeExtras, ValidationSchema, ValidationSchemaWithHook } from './types';
-import { HttpException, MiddlewareResponseError, ValidationError } from './errors';
+import { HttpException, ValidationError } from './errors';
 import { shouldApplyMiddleware } from '@asenajs/asena/utils';
 import { regularFileStats, StaticFileReader, staticFileHeaders } from './utils/staticFileReader';
 import type { Stats } from 'fs';
@@ -901,64 +901,33 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
     const middleware = middlewares[index];
 
-    let nextCalled = false;
+    let downstream: Promise<boolean | Response> | undefined;
 
-    // Create next() function that executes the next middleware in chain
     const next = async (): Promise<void> => {
-      nextCalled = true;
+      downstream ??= this.executeMiddlewares(context, middlewares, index + 1, onComplete);
 
-      const result = await this.executeMiddlewares(context, middlewares, index + 1, onComplete);
+      const result = await downstream;
 
-      // If next middleware returned Response, throw MiddlewareResponseError to propagate it
       if (result instanceof Response) {
-        throw new MiddlewareResponseError(result);
-      }
-
-      // If next middleware returned false, throw to stop current middleware
-      if (result === false) {
-        throw new Error('MIDDLEWARE_CHAIN_STOPPED');
+        context.res.status = result.status;
       }
     };
 
-    try {
-      // Execute middleware with real next() function
-      const result = await middleware.handle(context, next);
+    const result = await middleware.handle(context, next);
 
-      // If middleware returns Response, stop pipeline and return response
-      if (result instanceof Response) {
-        return result;
-      }
-
-      // If middleware returns false, stop pipeline
-      if (result === false) {
-        return false;
-      }
-
-      // If middleware returned true/void without calling next(), auto-continue the chain
-      if (!nextCalled) {
-        return await this.executeMiddlewares(context, middlewares, index + 1, onComplete);
-      }
-
-      // Middleware called next() and completed successfully
-      return true;
-    } catch (error) {
-      // HttpException is deliberately NOT answered here. Converting it to a Response inside the
-      // middleware chain short-circuits the application's error handler; rethrowing lets the
-      // caller's terminal catch run it through respondToError like every other error.
-
-      // If a downstream middleware returned a Response, propagate it
-      if (error instanceof MiddlewareResponseError) {
-        return error.response;
-      }
-
-      // If a downstream middleware stopped the chain with false, propagate the stop
-      if (error instanceof Error && error.message === 'MIDDLEWARE_CHAIN_STOPPED') {
-        return false;
-      }
-
-      // Other errors should be thrown (will be caught by route handler)
-      throw error;
+    if (result instanceof Response) {
+      return result;
     }
+
+    if (result === false) {
+      return false;
+    }
+
+    if (downstream !== undefined) {
+      return await downstream;
+    }
+
+    return await this.executeMiddlewares(context, middlewares, index + 1, onComplete);
   }
 
   /**
@@ -1263,7 +1232,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
       try {
         const result = hasMiddlewares
-          ? this.executeMiddlewares(context, middlewares, 0, () => runRoute(req, context))
+          ? this.executeMiddlewares(context, middlewares, 0, () => this.runRouteInChain(runRoute, req, context))
           : runRoute(req, context);
 
         if (isThenable(result)) {
@@ -1275,6 +1244,18 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         return this.failRoute(context, error);
       }
     };
+  }
+
+  private async runRouteInChain(
+    runRoute: (req: Request, context: Context) => Response | Promise<Response>,
+    req: Request,
+    context: Context,
+  ): Promise<Response> {
+    try {
+      return await runRoute(req, context);
+    } catch (error) {
+      return await this.respondToError(error, context);
+    }
   }
 
   private runRouteHandler(
