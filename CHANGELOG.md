@@ -1,5 +1,11 @@
 # @asenajs/ergenecore
 
+## 5.0.2
+
+### Patch Changes
+
+- 361022f: `deleteCookie` now sends the cookie's attributes (`secure`, `httpOnly`, `sameSite`, `partitioned`, `path`, `domain`) with `Max-Age=0`, so browsers remove `__Host-`/`__Secure-` cookies. Calling it without options no longer throws.
+
 ## 5.0.1
 
 ### Patch Changes
