@@ -1610,14 +1610,17 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
     this.staticFileReader.release(resolvedFilePath);
 
-    // 5. Create Bun.file() instance
-    const file = Bun.file(resolvedFilePath);
+    // A path holding a NUL byte makes Bun.file() throw: a miss, not a 500.
+    let file: ReturnType<typeof Bun.file> | undefined;
 
-    // 5. Check if file exists
-    const fileExists = await file.exists();
+    try {
+      file = Bun.file(resolvedFilePath);
+    } catch {
+      file = undefined;
+    }
 
     // 6. File not found → trigger onNotFound hook
-    if (!fileExists) {
+    if (file === undefined || !(await file.exists())) {
       if (staticServe.onNotFound) {
         await staticServe.onNotFound.handler(rewrittenPath, context);
 
