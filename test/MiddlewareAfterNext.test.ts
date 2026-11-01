@@ -61,6 +61,33 @@ describe('middleware code after next()', () => {
     expect(response.headers.get('x-after-next')).toBe('added');
   });
 
+  test('a header a global middleware sets after next() is on an unmatched response', async () => {
+    const baseUrl = await boot(async (context, next) => {
+      await next();
+      context.res.headers.set('x-after-next', 'added');
+    });
+
+    const response = await fetch(`${baseUrl}/nowhere`);
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get('x-after-next')).toBe('added');
+  });
+
+  test('a header a global middleware sets after next() is on an onNotFound response', async () => {
+    const baseUrl = await boot(async (context, next) => {
+      await next();
+      context.res.headers.set('x-after-next', 'added');
+    });
+
+    adapter.onNotFound((context: Context) => context.send({ custom: true }, 404));
+
+    const response = await fetch(`${baseUrl}/nowhere`);
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ custom: true });
+    expect(response.headers.get('x-after-next')).toBe('added');
+  });
+
   test('an error a middleware throws after next() reaches onError', async () => {
     const handled: string[] = [];
     const baseUrl = await boot(async (_context, next) => {

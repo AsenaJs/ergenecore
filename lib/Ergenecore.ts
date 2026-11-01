@@ -633,18 +633,18 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
             this.respondToUnmatched(context, requestPath, req.method),
           );
 
-          if (result instanceof Response) return result;
+          if (result instanceof Response) return context.applyMiddlewareHeaders(result);
 
           if (result === false) {
-            return new Response('Forbidden', { status: 403 });
+            return context.applyMiddlewareHeaders(new Response('Forbidden', { status: 403 }));
           }
         }
 
         // Reached when no global middleware applies, or when one short-circuited without calling
         // next(). The application's onNotFound, or the default 404.
-        return await this.respondToUnmatched(context, requestPath, req.method);
+        return context.applyMiddlewareHeaders(await this.respondToUnmatched(context, requestPath, req.method));
       } catch (error) {
-        return await this.respondToError(error, context);
+        return context.applyMiddlewareHeaders(await this.respondToError(error, context));
       }
     };
 
