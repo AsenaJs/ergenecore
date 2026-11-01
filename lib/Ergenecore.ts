@@ -609,7 +609,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
     // Catch-all handler for unmatched routes (including OPTIONS preflight)
     // Runs global middlewares so CORS and other cross-cutting concerns work for all requests
-    routes['/*'] = async (req: Request): Promise<Response> => {
+    const unmatched = async (req: Request): Promise<Response> => {
       const context = new ErgenecoreContextWrapper(req, this.server);
       const requestPath = new URL(req.url).pathname;
 
@@ -647,6 +647,20 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         return context.applyMiddlewareHeaders(await this.respondToError(error, context));
       }
     };
+
+    const userCatchAll = routes['/*'];
+
+    if (userCatchAll === undefined) {
+      routes['/*'] = unmatched;
+    } else if (typeof userCatchAll !== 'function') {
+      const handlers: Record<string, ((req: Request) => Response | Promise<Response>) | undefined> = Object.assign(
+        Object.create(null),
+        { HEAD: userCatchAll.GET },
+        userCatchAll,
+      );
+
+      routes['/*'] = (req: Request) => (handlers[req.method] ?? unmatched)(req);
+    }
 
     return routes;
   }
