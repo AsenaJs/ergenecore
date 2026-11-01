@@ -25,7 +25,7 @@ import type { Server } from 'bun';
 import * as Bun from 'bun';
 import * as path from 'path';
 import type { StaticServeExtras, ValidationSchema, ValidationSchemaWithHook } from './types';
-import { HttpException, MiddlewareResponseError, ValidationError } from './errors';
+import { HttpException, ValidationError } from './errors';
 import { shouldApplyMiddleware } from '@asenajs/asena/utils';
 import { regularFileStats, StaticFileReader, staticFileHeaders } from './utils/staticFileReader';
 import type { Stats } from 'fs';
@@ -344,16 +344,6 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    */
   public registerRoute(params: RouteParams<Context, ValidationSchemaWithHook>): void {
     const label = `${params.method} ${params.path}`;
-    if (params.contextContract && !params.contextClass) {
-      throw new Error(`${label}: contextContract requires contextClass`);
-    }
-    if (
-      params.contextClass &&
-      params.contextContract !== undefined &&
-      params.contextContract !== params.contextClass[ASENA_CONTEXT_CONTRACT]
-    ) {
-      throw new Error(`${label}: contextContract does not match contextClass`);
-    }
     if (params.validatorCache !== undefined && typeof params.validatorCache !== 'boolean') {
       throw new Error(`${label}: validatorCache must be a boolean`);
     }
@@ -584,13 +574,14 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
           : undefined;
         const validationSteps = route.validator ? await this.prepareValidationSteps(route) : [];
 
-        // Fast Path Optimization with Pattern Matching
-        // ✅ Check if this route has any applicable global middlewares
-        const applicableGlobalMiddlewares = this.getGlobalMiddlewaresForPath(route.path);
+        const hasGlobalMiddlewares =
+          normalizedPath === '/*'
+            ? this.globalMiddlewares.length > 0
+            : this.getGlobalMiddlewaresForPath(route.path).length > 0;
 
         // Check if route is simple (no middleware, validation, or static serve)
         const isSimpleRoute =
-          applicableGlobalMiddlewares.length === 0 &&
+          !hasGlobalMiddlewares &&
           (!route.middlewares || route.middlewares.length === 0) &&
           !route.validator &&
           !validateContract &&
@@ -619,7 +610,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
     // Catch-all handler for unmatched routes (including OPTIONS preflight)
     // Runs global middlewares so CORS and other cross-cutting concerns work for all requests
-    routes['/*'] = async (req: Request): Promise<Response> => {
+    const unmatched = async (req: Request): Promise<Response> => {
       const context = new ErgenecoreContextWrapper(req, this.server);
       const requestPath = new URL(req.url).pathname;
 
@@ -643,20 +634,34 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
             this.respondToUnmatched(context, requestPath, req.method),
           );
 
-          if (result instanceof Response) return result;
+          if (result instanceof Response) return context.applyMiddlewareHeaders(result);
 
           if (result === false) {
-            return new Response('Forbidden', { status: 403 });
+            return context.applyMiddlewareHeaders(new Response('Forbidden', { status: 403 }));
           }
         }
 
         // Reached when no global middleware applies, or when one short-circuited without calling
         // next(). The application's onNotFound, or the default 404.
-        return await this.respondToUnmatched(context, requestPath, req.method);
+        return context.applyMiddlewareHeaders(await this.respondToUnmatched(context, requestPath, req.method));
       } catch (error) {
-        return await this.respondToError(error, context);
+        return context.applyMiddlewareHeaders(await this.respondToError(error, context));
       }
     };
+
+    const userCatchAll = routes['/*'];
+
+    if (userCatchAll === undefined) {
+      routes['/*'] = unmatched;
+    } else if (typeof userCatchAll !== 'function') {
+      const handlers: Record<string, ((req: Request) => Response | Promise<Response>) | undefined> = Object.assign(
+        Object.create(null),
+        { HEAD: userCatchAll.GET },
+        userCatchAll,
+      );
+
+      routes['/*'] = (req: Request) => (handlers[req.method] ?? unmatched)(req);
+    }
 
     return routes;
   }
@@ -911,64 +916,33 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
     const middleware = middlewares[index];
 
-    let nextCalled = false;
+    let downstream: Promise<boolean | Response> | undefined;
 
-    // Create next() function that executes the next middleware in chain
     const next = async (): Promise<void> => {
-      nextCalled = true;
+      downstream ??= this.executeMiddlewares(context, middlewares, index + 1, onComplete);
 
-      const result = await this.executeMiddlewares(context, middlewares, index + 1, onComplete);
+      const result = await downstream;
 
-      // If next middleware returned Response, throw MiddlewareResponseError to propagate it
       if (result instanceof Response) {
-        throw new MiddlewareResponseError(result);
-      }
-
-      // If next middleware returned false, throw to stop current middleware
-      if (result === false) {
-        throw new Error('MIDDLEWARE_CHAIN_STOPPED');
+        context.res.status = result.status;
       }
     };
 
-    try {
-      // Execute middleware with real next() function
-      const result = await middleware.handle(context, next);
+    const result = await middleware.handle(context, next);
 
-      // If middleware returns Response, stop pipeline and return response
-      if (result instanceof Response) {
-        return result;
-      }
-
-      // If middleware returns false, stop pipeline
-      if (result === false) {
-        return false;
-      }
-
-      // If middleware returned true/void without calling next(), auto-continue the chain
-      if (!nextCalled) {
-        return await this.executeMiddlewares(context, middlewares, index + 1, onComplete);
-      }
-
-      // Middleware called next() and completed successfully
-      return true;
-    } catch (error) {
-      // HttpException is deliberately NOT answered here. Converting it to a Response inside the
-      // middleware chain short-circuits the application's error handler; rethrowing lets the
-      // caller's terminal catch run it through respondToError like every other error.
-
-      // If a downstream middleware returned a Response, propagate it
-      if (error instanceof MiddlewareResponseError) {
-        return error.response;
-      }
-
-      // If a downstream middleware stopped the chain with false, propagate the stop
-      if (error instanceof Error && error.message === 'MIDDLEWARE_CHAIN_STOPPED') {
-        return false;
-      }
-
-      // Other errors should be thrown (will be caught by route handler)
-      throw error;
+    if (result instanceof Response) {
+      return result;
     }
+
+    if (result === false) {
+      return false;
+    }
+
+    if (downstream !== undefined) {
+      return await downstream;
+    }
+
+    return await this.executeMiddlewares(context, middlewares, index + 1, onComplete);
   }
 
   /**
@@ -1201,12 +1175,11 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     validateContract?: (context: Context) => Promise<void>,
     validationSteps: ValidationStep[] = [],
   ) {
-    // ✅ Filter global middlewares by path pattern (ONCE during route building)
-    // This happens at server startup, NOT on every request → zero runtime overhead
-    const applicableGlobalMiddlewares = this.getGlobalMiddlewaresForPath(route.path);
-    // Combine global + route middlewares into a single chain
-    const middlewares = [...applicableGlobalMiddlewares, ...(route.middlewares || [])];
-    const hasMiddlewares = middlewares.length > 0;
+    // A top-level `/*` answers every path, so include/exclude patterns must see the request path.
+    const globalsByRequestPath = (route.path === '/*' || route.path === '/*/') && this.globalMiddlewares.length > 0;
+    const middlewares = globalsByRequestPath
+      ? route.middlewares || []
+      : [...this.getGlobalMiddlewaresForPath(route.path), ...(route.middlewares || [])];
     // Resolved root for static file serving, computed once at startup instead of per request
     const resolvedStaticRoot = route.staticServe ? path.resolve(route.staticServe.root) : '';
     // The containment test below is a prefix comparison, so it needs the separator baked in.
@@ -1272,9 +1245,13 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       }
 
       try {
-        const result = hasMiddlewares
-          ? this.executeMiddlewares(context, middlewares, 0, () => runRoute(req, context))
-          : runRoute(req, context);
+        const chain = globalsByRequestPath
+          ? [...this.getGlobalMiddlewaresForPath(new URL(req.url).pathname), ...middlewares]
+          : middlewares;
+        const result =
+          chain.length > 0
+            ? this.executeMiddlewares(context, chain, 0, () => this.runRouteInChain(runRoute, req, context))
+            : runRoute(req, context);
 
         if (isThenable(result)) {
           return this.settleRoute(context, result);
@@ -1285,6 +1262,18 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         return this.failRoute(context, error);
       }
     };
+  }
+
+  private async runRouteInChain(
+    runRoute: (req: Request, context: Context) => Response | Promise<Response>,
+    req: Request,
+    context: Context,
+  ): Promise<Response> {
+    try {
+      return await runRoute(req, context);
+    } catch (error) {
+      return await this.respondToError(error, context);
+    }
   }
 
   private runRouteHandler(
@@ -1639,14 +1628,19 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
     this.staticFileReader.release(resolvedFilePath);
 
-    // 5. Create Bun.file() instance
-    const file = Bun.file(resolvedFilePath);
+    // A path holding a NUL byte makes Bun.file() throw: a miss, not a 500.
+    let file: ReturnType<typeof Bun.file> | undefined;
 
-    // 5. Check if file exists
-    const fileExists = await file.exists();
+    try {
+      file = Bun.file(resolvedFilePath);
+
+      if (!(await file.exists())) file = undefined;
+    } catch {
+      file = undefined;
+    }
 
     // 6. File not found → trigger onNotFound hook
-    if (!fileExists) {
+    if (file === undefined) {
       if (staticServe.onNotFound) {
         await staticServe.onNotFound.handler(rewrittenPath, context);
 
@@ -1853,8 +1847,6 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * Filters global middlewares for a specific route path
    *
    * Uses pattern matching to determine which middlewares should apply to this path.
-   * Pattern matching happens ONCE during route building (deferred registration),
-   * not on every request, ensuring zero runtime overhead.
    *
    * @param path - Route path (e.g., '/api/users', '/users/:id')
    * @returns Array of middlewares that should apply to this path

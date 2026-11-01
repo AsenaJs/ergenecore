@@ -112,6 +112,21 @@ describe('Static Serve Path Security', () => {
       expect(mockLogger.error).not.toHaveBeenCalled();
     });
   });
+
+  describe('NUL byte in the decoded path', () => {
+    for (const target of ['/assets/a%00.txt', '/assets/app.js%00']) {
+      it(`should answer the application 404 for ${target}`, async () => {
+        (mockLogger.error as ReturnType<typeof mock>).mockClear();
+
+        const response = await rawGet(TEST_PORT, target);
+
+        expect(response.status).toBe(404);
+        expect(response.body).toContain('{"error":"Not Found"}');
+        expect(response.body).not.toContain(STATIC_DIR);
+        expect(mockLogger.error).not.toHaveBeenCalled();
+      });
+    }
+  });
 });
 
 /**
