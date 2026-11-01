@@ -574,14 +574,14 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
           : undefined;
         const validationSteps = route.validator ? await this.prepareValidationSteps(route) : [];
 
-        // Fast Path Optimization with Pattern Matching
-        // ✅ Check if this route has any applicable global middlewares
-        const applicableGlobalMiddlewares =
-          route.path === '/*' ? this.globalMiddlewares : this.getGlobalMiddlewaresForPath(route.path);
+        const hasGlobalMiddlewares =
+          route.path === '/*'
+            ? this.globalMiddlewares.length > 0
+            : this.getGlobalMiddlewaresForPath(route.path).length > 0;
 
         // Check if route is simple (no middleware, validation, or static serve)
         const isSimpleRoute =
-          applicableGlobalMiddlewares.length === 0 &&
+          !hasGlobalMiddlewares &&
           (!route.middlewares || route.middlewares.length === 0) &&
           !route.validator &&
           !validateContract &&
@@ -1175,8 +1175,6 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     validateContract?: (context: Context) => Promise<void>,
     validationSteps: ValidationStep[] = [],
   ) {
-    // ✅ Filter global middlewares by path pattern (ONCE during route building)
-    // This happens at server startup, NOT on every request → zero runtime overhead
     // A top-level `/*` answers every path, so include/exclude patterns must see the request path.
     const globalsByRequestPath = route.path === '/*' && this.globalMiddlewares.length > 0;
     const middlewares = globalsByRequestPath
@@ -1849,8 +1847,6 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * Filters global middlewares for a specific route path
    *
    * Uses pattern matching to determine which middlewares should apply to this path.
-   * Pattern matching happens ONCE during route building (deferred registration),
-   * not on every request, ensuring zero runtime overhead.
    *
    * @param path - Route path (e.g., '/api/users', '/users/:id')
    * @returns Array of middlewares that should apply to this path
