@@ -736,7 +736,8 @@ export class ErgenecoreContextWrapper<I extends InputMap = Record<never, never>>
    * Uses Bun's native cookie API which automatically handles Set-Cookie headers.
    *
    * @param name - Cookie name
-   * @param options - Cookie options (path, domain)
+   * @param options - The attributes the cookie was set with (path, domain, secure, httpOnly, sameSite,
+   * partitioned); a browser only replaces a `__Host-`/`__Secure-` cookie with a Set-Cookie that matches them.
    */
   public async deleteCookie(name: string, options?: CookieExtra<any>): Promise<void> {
     const { extraOptions } = options ?? {
@@ -746,14 +747,8 @@ export class ErgenecoreContextWrapper<I extends InputMap = Record<never, never>>
 
     // Use Bun native API (available in Bun.serve() context)
     if ('cookies' in this.request && (this.request as any).cookies) {
-      const deleteOptions = extraOptions
-        ? {
-            path: extraOptions.path,
-            domain: extraOptions.domain,
-          }
-        : undefined;
-
-      (this.request as any).cookies.delete(name, deleteOptions);
+      // CookieMap.delete keeps only path/domain/secure and forces SameSite=Lax, so expire the cookie via set.
+      (this.request as any).cookies.set(name, '', { ...extraOptions, maxAge: 0, expires: new Date(0) });
     } else {
       throw new Error(
         'deleteCookie() requires Bun native cookie API. ' +
