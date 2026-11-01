@@ -182,6 +182,31 @@ describe('a user route at top-level /*', () => {
     expect(seen).toEqual(['/about']);
   });
 
+  it('runs a path-scoped global middleware for a catch-all declared as /*/', async () => {
+    const app = createAdapter();
+
+    app.use(
+      {
+        override: false,
+        handle: async (ctx: Context) => ctx.send({ error: 'Unauthorized' }, 401),
+      },
+      { include: ['/api/*'] },
+    );
+    app.registerRoute(route(HttpMethod.GET, '/*/', (ctx) => ctx.send({ handler: 'catch-all' })));
+
+    const baseUrl = await start(app);
+
+    const privateGet = await fetch(`${baseUrl}/api/private`);
+
+    expect(privateGet.status).toBe(401);
+    expect(await privateGet.json()).toEqual({ error: 'Unauthorized' });
+
+    const page = await fetch(`${baseUrl}/about`);
+
+    expect(page.status).toBe(200);
+    expect(await page.json()).toEqual({ handler: 'catch-all' });
+  });
+
   it('owns every method when registered for all of them', async () => {
     const app = createAdapter();
 

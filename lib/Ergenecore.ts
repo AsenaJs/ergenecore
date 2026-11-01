@@ -575,7 +575,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         const validationSteps = route.validator ? await this.prepareValidationSteps(route) : [];
 
         const hasGlobalMiddlewares =
-          route.path === '/*'
+          normalizedPath === '/*'
             ? this.globalMiddlewares.length > 0
             : this.getGlobalMiddlewaresForPath(route.path).length > 0;
 
@@ -1176,7 +1176,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     validationSteps: ValidationStep[] = [],
   ) {
     // A top-level `/*` answers every path, so include/exclude patterns must see the request path.
-    const globalsByRequestPath = route.path === '/*' && this.globalMiddlewares.length > 0;
+    const globalsByRequestPath = (route.path === '/*' || route.path === '/*/') && this.globalMiddlewares.length > 0;
     const middlewares = globalsByRequestPath
       ? route.middlewares || []
       : [...this.getGlobalMiddlewaresForPath(route.path), ...(route.middlewares || [])];
