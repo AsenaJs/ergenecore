@@ -344,16 +344,6 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    */
   public registerRoute(params: RouteParams<Context, ValidationSchemaWithHook>): void {
     const label = `${params.method} ${params.path}`;
-    if (params.contextContract && !params.contextClass) {
-      throw new Error(`${label}: contextContract requires contextClass`);
-    }
-    if (
-      params.contextClass &&
-      params.contextContract !== undefined &&
-      params.contextContract !== params.contextClass[ASENA_CONTEXT_CONTRACT]
-    ) {
-      throw new Error(`${label}: contextContract does not match contextClass`);
-    }
     if (params.validatorCache !== undefined && typeof params.validatorCache !== 'boolean') {
       throw new Error(`${label}: validatorCache must be a boolean`);
     }

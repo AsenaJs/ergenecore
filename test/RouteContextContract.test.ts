@@ -221,7 +221,15 @@ describe('Ergenecore route context contracts', () => {
     expect(() => adapter.registerRoute({ ...base, contextClass: RouteContext, validator: {} } as any)).toThrow('both');
     expect(() =>
       adapter.registerRoute({ ...base, contextContract: RouteContext[ASENA_CONTEXT_CONTRACT] } as any),
-    ).toThrow('requires contextClass');
+    ).toThrow('get /guard: contextContract must match contextClass');
+    class OtherContext extends Context.define({ query: schema((value) => ({ value })) }) {}
+    expect(() =>
+      adapter.registerRoute({
+        ...base,
+        contextClass: RouteContext,
+        contextContract: OtherContext[ASENA_CONTEXT_CONTRACT],
+      } as any),
+    ).toThrow('get /guard: contextContract must match contextClass');
     expect(() => adapter.registerRoute({ ...base, validatorCache: false } as any)).toThrow(
       'requires a legacy validator',
     );
