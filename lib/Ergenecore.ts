@@ -576,7 +576,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
         // Fast Path Optimization with Pattern Matching
         // ✅ Check if this route has any applicable global middlewares
-        const applicableGlobalMiddlewares = this.getGlobalMiddlewaresForPath(route.path);
+        const applicableGlobalMiddlewares =
+          route.path === '/*' ? this.globalMiddlewares : this.getGlobalMiddlewaresForPath(route.path);
 
         // Check if route is simple (no middleware, validation, or static serve)
         const isSimpleRoute =
@@ -1176,10 +1177,11 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
   ) {
     // ✅ Filter global middlewares by path pattern (ONCE during route building)
     // This happens at server startup, NOT on every request → zero runtime overhead
-    const applicableGlobalMiddlewares = this.getGlobalMiddlewaresForPath(route.path);
-    // Combine global + route middlewares into a single chain
-    const middlewares = [...applicableGlobalMiddlewares, ...(route.middlewares || [])];
-    const hasMiddlewares = middlewares.length > 0;
+    // A top-level `/*` answers every path, so include/exclude patterns must see the request path.
+    const globalsByRequestPath = route.path === '/*' && this.globalMiddlewares.length > 0;
+    const middlewares = globalsByRequestPath
+      ? route.middlewares || []
+      : [...this.getGlobalMiddlewaresForPath(route.path), ...(route.middlewares || [])];
     // Resolved root for static file serving, computed once at startup instead of per request
     const resolvedStaticRoot = route.staticServe ? path.resolve(route.staticServe.root) : '';
     // The containment test below is a prefix comparison, so it needs the separator baked in.
@@ -1245,9 +1247,13 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       }
 
       try {
-        const result = hasMiddlewares
-          ? this.executeMiddlewares(context, middlewares, 0, () => this.runRouteInChain(runRoute, req, context))
-          : runRoute(req, context);
+        const chain = globalsByRequestPath
+          ? [...this.getGlobalMiddlewaresForPath(new URL(req.url).pathname), ...middlewares]
+          : middlewares;
+        const result =
+          chain.length > 0
+            ? this.executeMiddlewares(context, chain, 0, () => this.runRouteInChain(runRoute, req, context))
+            : runRoute(req, context);
 
         if (isThenable(result)) {
           return this.settleRoute(context, result);

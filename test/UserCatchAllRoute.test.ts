@@ -142,6 +142,46 @@ describe('a user route at top-level /*', () => {
     expect(page.headers.get('Access-Control-Allow-Origin')).toBe('*');
   });
 
+  it('runs a path-scoped global middleware by the request path, not the /* pattern', async () => {
+    const app = createAdapter();
+    const seen: string[] = [];
+
+    app.use(
+      {
+        override: false,
+        handle: async (ctx: Context) => ctx.send({ error: 'Unauthorized' }, 401),
+      },
+      { include: ['/api/*'] },
+    );
+    app.use(
+      {
+        override: false,
+        handle: async (ctx: Context, next: () => Promise<void>) => {
+          seen.push(new URL(ctx.req.url).pathname);
+          await next();
+        },
+      },
+      { exclude: ['/health'] },
+    );
+    app.registerRoute(route(HttpMethod.GET, '/*', (ctx) => ctx.send({ handler: 'catch-all' })));
+
+    const baseUrl = await start(app);
+
+    const privateGet = await fetch(`${baseUrl}/api/private`);
+
+    expect(privateGet.status).toBe(401);
+    expect(await privateGet.json()).toEqual({ error: 'Unauthorized' });
+    expect((await fetch(`${baseUrl}/api/private`, { method: 'POST' })).status).toBe(401);
+
+    const page = await fetch(`${baseUrl}/about`);
+
+    expect(page.status).toBe(200);
+    expect(await page.json()).toEqual({ handler: 'catch-all' });
+
+    expect((await fetch(`${baseUrl}/health`)).status).toBe(200);
+    expect(seen).toEqual(['/about']);
+  });
+
   it('owns every method when registered for all of them', async () => {
     const app = createAdapter();
 
