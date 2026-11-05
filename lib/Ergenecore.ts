@@ -25,6 +25,7 @@ import type { Server } from 'bun';
 import * as Bun from 'bun';
 import * as path from 'path';
 import type { StaticServeExtras, ValidationSchema, ValidationSchemaWithHook } from './types';
+import type { DevtoolsBus } from './types/Devtools';
 import { HttpException, ValidationError } from './errors';
 import { shouldApplyMiddleware } from '@asenajs/asena/utils';
 import { regularFileStats, StaticFileReader, staticFileHeaders } from './utils/staticFileReader';
@@ -223,6 +224,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
   private options: AsenaServeOptions = {} satisfies AsenaServeOptions;
 
+  private devtools?: DevtoolsBus;
+
   /**
    * Creates a new CoreAdapter instance
    *
@@ -271,6 +274,18 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    */
   public setPort(port: number): void {
     this.port = port;
+  }
+
+  /**
+   * Reports every HTTP request to `asena console` as a record on `bus`.
+   *
+   * Core calls this before any route is registered, and only in a process the console spawned.
+   * Routes are wrapped when `start()` builds them; without this call they are not wrapped at all.
+   *
+   * @param bus - The server's devtools bus
+   */
+  public attachDevtools(bus: DevtoolsBus): void {
+    this.devtools = bus;
   }
 
   /**
@@ -588,9 +603,11 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
           !route.staticServe;
 
         // Create handler based on route complexity
-        const handler = isSimpleRoute
-          ? this.createFastPathHandler(route)
-          : this.createRouteHandler(route, validateContract, validationSteps);
+        const handler = this.traced(
+          isSimpleRoute
+            ? this.createFastPathHandler(route)
+            : this.createRouteHandler(route, validateContract, validationSteps),
+        );
 
         // Register handler to both path variants for trailing slash support
         if (method === 'ALL') {
@@ -610,7 +627,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
     // Catch-all handler for unmatched routes (including OPTIONS preflight)
     // Runs global middlewares so CORS and other cross-cutting concerns work for all requests
-    const unmatched = async (req: Request): Promise<Response> => {
+    const unmatched = this.traced(async (req: Request): Promise<Response> => {
       const context = new ErgenecoreContextWrapper(req, this.server);
       const requestPath = new URL(req.url).pathname;
 
@@ -647,7 +664,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       } catch (error) {
         return context.applyMiddlewareHeaders(await this.respondToError(error, context));
       }
-    };
+    });
 
     const userCatchAll = routes['/*'];
 
@@ -737,6 +754,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       }
     }
 
+    this.devtools?.step('adapter-default', this.name);
     this.logUnmatched(path, method);
 
     return new Response(NOT_FOUND, {
@@ -835,6 +853,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     // Reached when there is no handler, when it declined, or when it threw - in every one of
     // those the framework is answering, so it is the framework's job to say what happened.
     // Without this, an `onError` that returns nothing swallows a 500 with no trace anywhere.
+    this.devtools?.step('adapter-default', this.name);
     this.logHandledError(error, context);
 
     // Branded check, not `instanceof`: with two resolved copies of this package `instanceof`
@@ -1158,6 +1177,51 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     };
   }
 
+  /** The request entry itself without devtools, so the served closure is exactly the one built. */
+  private traced(
+    handler: (req: Request) => Response | Promise<Response>,
+  ): (req: Request) => Response | Promise<Response> {
+    return this.devtools ? this.traceRequests(this.devtools, handler) : handler;
+  }
+
+  /** A failure escaping the handler leaves the answer to Bun, so the record closes as an adapter 500. */
+  private traceRequests(
+    bus: DevtoolsBus,
+    handler: (req: Request) => Response | Promise<Response>,
+  ): (req: Request) => Response | Promise<Response> {
+    const escaped = { kind: 'adapter-default', name: this.name } as const;
+
+    return (req: Request): Response | Promise<Response> => {
+      const record = bus.open(req.method, requestPathname(req.url));
+      let result: Response | Promise<Response>;
+
+      try {
+        result = bus.run(record, () => handler(req));
+      } catch (error) {
+        bus.close(record, 500, escaped);
+        throw error;
+      }
+
+      if (!isThenable(result)) {
+        bus.close(record, result.status);
+
+        return result;
+      }
+
+      return result.then(
+        (response) => {
+          bus.close(record, response.status);
+
+          return response;
+        },
+        (error: unknown) => {
+          bus.close(record, 500, escaped);
+          throw error;
+        },
+      );
+    };
+  }
+
   /**
    * Creates a route handler function for Bun's router
    *
@@ -1350,10 +1414,18 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     for (const target of VALIDATOR_METHODS) {
       const handler: ValidatorHandler<ValidationSchemaWithHook | ValidationSchema> = route.validator[target];
       if (!handler || typeof handler.handle !== 'function') continue;
+      const extract = this.createValidationExtractor(target);
+      const devtools = this.devtools;
       const step: ValidationStep = {
         target,
         handle: () => handler.handle(),
-        extract: this.createValidationExtractor(target),
+        extract: devtools
+          ? (context) => {
+              devtools.step('validator', target);
+
+              return extract(context);
+            }
+          : extract,
         cachedResolved: route.validatorCache !== false,
       };
       if (route.validatorCache !== false) {
