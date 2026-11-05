@@ -8,6 +8,7 @@ import {
   type ErrorHandler,
   type NotFoundHandler,
   isHttpException,
+  isValidationError,
   type RouteParams,
   VALIDATOR_METHODS,
   type ValidatorHandler,
@@ -25,7 +26,7 @@ import type { Server } from 'bun';
 import * as Bun from 'bun';
 import * as path from 'path';
 import type { StaticServeExtras, ValidationSchema, ValidationSchemaWithHook } from './types';
-import type { DevtoolsBus } from './types/Devtools';
+import type { DevtoolsBus, DevtoolsStep } from './types/Devtools';
 import { HttpException, ValidationError } from './errors';
 import { shouldApplyMiddleware } from '@asenajs/asena/utils';
 import { regularFileStats, StaticFileReader, staticFileHeaders } from './utils/staticFileReader';
@@ -134,6 +135,14 @@ interface ValidationStep {
   extract: (context: Context) => Promise<unknown> | unknown;
   prepared?: { schema: ValidationSchema; hook: ValidationSchemaWithHook['hook'] | null };
   cachedResolved: boolean;
+  observed?: DevtoolsStep;
+}
+
+/** The validator class is behind a bound handle; core may name its component on the handle itself. */
+function validatorStepName(handler: object, target: string): string {
+  const component = (handler as { name?: unknown }).name;
+
+  return typeof component === 'string' && component !== '' ? `${component}.${target}` : target;
 }
 
 /**
@@ -226,6 +235,9 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
   private devtools?: DevtoolsBus;
 
+  /** Validation failures, and the responses built from them, mapped to the validator step that raised them. */
+  private producedBy?: WeakMap<object, DevtoolsStep>;
+
   /**
    * Creates a new CoreAdapter instance
    *
@@ -286,6 +298,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    */
   public attachDevtools(bus: DevtoolsBus): void {
     this.devtools = bus;
+    this.producedBy = new WeakMap();
   }
 
   /**
@@ -585,7 +598,10 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         const method = route.method.toUpperCase();
         const contextClass = route.contextClass as ContractContextClass<Context> | undefined;
         const validateContract = contextClass
-          ? prepareContextValidation(route.contextContract ?? contextClass[ASENA_CONTEXT_CONTRACT])
+          ? this.observeContract(
+              prepareContextValidation(route.contextContract ?? contextClass[ASENA_CONTEXT_CONTRACT]),
+              contextClass.name,
+            )
           : undefined;
         const validationSteps = route.validator ? await this.prepareValidationSteps(route) : [];
 
@@ -850,12 +866,28 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       }
     }
 
+    // A validation failure nobody answered is the validator's own 400, not the adapter's.
+    const failedAt = this.producedBy?.get(error as object);
+
+    if (!failedAt) {
+      this.devtools?.step('adapter-default', this.name);
+    }
+
     // Reached when there is no handler, when it declined, or when it threw - in every one of
     // those the framework is answering, so it is the framework's job to say what happened.
     // Without this, an `onError` that returns nothing swallows a 500 with no trace anywhere.
-    this.devtools?.step('adapter-default', this.name);
     this.logHandledError(error, context);
 
+    const response = this.defaultErrorResponse(error);
+
+    if (failedAt) {
+      this.producedBy?.set(response, failedAt);
+    }
+
+    return response;
+  }
+
+  private defaultErrorResponse(error: unknown): Response {
     // Branded check, not `instanceof`: with two resolved copies of this package `instanceof`
     // answers false and every deliberate 401/403/404 silently becomes the generic 500 below.
     if (isHttpException(error)) {
@@ -1190,6 +1222,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     handler: (req: Request) => Response | Promise<Response>,
   ): (req: Request) => Response | Promise<Response> {
     const escaped = { kind: 'adapter-default', name: this.name } as const;
+    const producedBy = this.producedBy;
 
     return (req: Request): Response | Promise<Response> => {
       const record = bus.open(req.method, requestPathname(req.url));
@@ -1203,14 +1236,14 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       }
 
       if (!isThenable(result)) {
-        bus.close(record, result.status);
+        bus.close(record, result.status, producedBy?.get(result));
 
         return result;
       }
 
       return result.then(
         (response) => {
-          bus.close(record, response.status);
+          bus.close(record, response.status, producedBy?.get(response));
 
           return response;
         },
@@ -1406,6 +1439,25 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     return typeof schema === 'object' && schema !== null && 'schema' in schema;
   }
 
+  /** Core records the contract's step itself; the adapter only remembers which failures it raised. */
+  private observeContract<C>(validate: (context: C) => Promise<void>, name: string): (context: C) => Promise<void> {
+    const producedBy = this.producedBy;
+
+    if (!producedBy) return validate;
+
+    const step: DevtoolsStep = { kind: 'validator', name };
+
+    return async (context: C): Promise<void> => {
+      try {
+        await validate(context);
+      } catch (error) {
+        if (isValidationError(error)) producedBy.set(error, step);
+
+        throw error;
+      }
+    };
+  }
+
   /** Prepare each legacy validator target once for this route, preserving method order. */
   private async prepareValidationSteps(
     route: RouteParams<Context, ValidationSchemaWithHook>,
@@ -1416,17 +1468,23 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       if (!handler || typeof handler.handle !== 'function') continue;
       const extract = this.createValidationExtractor(target);
       const devtools = this.devtools;
+      const observed: DevtoolsStep | undefined = devtools && {
+        kind: 'validator',
+        name: validatorStepName(handler, target),
+      };
       const step: ValidationStep = {
         target,
         handle: () => handler.handle(),
-        extract: devtools
-          ? (context) => {
-              devtools.step('validator', target);
+        extract:
+          devtools && observed
+            ? (context) => {
+                devtools.step(observed.kind, observed.name);
 
-              return extract(context);
-            }
-          : extract,
+                return extract(context);
+              }
+            : extract,
         cachedResolved: route.validatorCache !== false,
+        observed,
       };
       if (route.validatorCache !== false) {
         try {
@@ -1474,7 +1532,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * @returns Response if validation fails, null if passes
    */
   private async validateRequest(context: Context, steps: ValidationStep[]): Promise<Response | null> {
-    for (const { target: key, handle, extract, prepared, cachedResolved } of steps) {
+    for (const step of steps) {
+      const { target: key, handle, extract, prepared, cachedResolved } = step;
       const handled = cachedResolved ? undefined : handle();
       const validationSchema = isThenable(handled) ? await handled : handled;
 
@@ -1512,7 +1571,13 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
       // Thrown, not answered here, so validation shares the same response envelope and the same
       // log line as every other error. The 400 moved onto `ValidationError.getResponse()`.
-      throw new ValidationError(result.error, key);
+      const error = new ValidationError(result.error, key);
+
+      if (step.observed) {
+        this.producedBy?.set(error, step.observed);
+      }
+
+      throw error;
     }
 
     return null;

@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ServerLogger } from '@asenajs/asena/logger';
-import type { BaseMiddleware, BaseValidator } from '@asenajs/asena/adapter';
+import type { BaseMiddleware, BaseValidator, ValidatorHandler } from '@asenajs/asena/adapter';
 import { HttpMethod } from '@asenajs/asena/web-types';
 import { z } from 'zod';
-import { type Context, Ergenecore, ErgenecoreWebsocketAdapter, type ValidationSchemaWithHook } from '../lib';
+import {
+  Context,
+  Ergenecore,
+  ErgenecoreWebsocketAdapter,
+  ValidationError,
+  type ValidationSchemaWithHook,
+} from '../lib';
 import type { DevtoolsBus, DevtoolsStep, DevtoolsStepKind } from '../lib/types/Devtools';
 
 const logger: ServerLogger = {
@@ -44,7 +50,7 @@ class FakeBus implements DevtoolsBus {
   }
 
   public close(record: FakeRecord, status: number, answeredBy?: DevtoolsStep): void {
-    this.closed.push({ ...record, steps: [...record.steps], status, answeredBy });
+    this.closed.push({ ...record, steps: [...record.steps], status, answeredBy: answeredBy ?? record.steps.at(-1) });
   }
 }
 
@@ -129,6 +135,24 @@ describe('Ergenecore devtools envelope', () => {
       expect(String(built[0])).not.toContain('devtools');
     });
 
+    it('a validation failure keeps no attribution state', async () => {
+      route('/notes', (ctx) => ctx.send('ok'), {
+        method: HttpMethod.POST,
+        validator: { json: { handle: () => z.object({ title: z.string() }), override: false } },
+      });
+
+      await boot();
+
+      const response = await fetch(`${baseUrl}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 1 }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(adapter['producedBy']).toBeUndefined();
+    });
+
     it('hands every request entry back untouched', () => {
       const entry = (_req: Request) => new Response('ok');
 
@@ -192,7 +216,7 @@ describe('Ergenecore devtools envelope', () => {
         path: '/notes/7',
         steps: [{ kind: 'controller', name: 'NoteController.find' }],
         status: 200,
-        answeredBy: undefined,
+        answeredBy: { kind: 'controller', name: 'NoteController.find' },
       });
     });
 
@@ -330,7 +354,7 @@ describe('Ergenecore devtools envelope', () => {
         path: '/missing/deep',
         steps: [ADAPTER_DEFAULT],
         status: 404,
-        answeredBy: undefined,
+        answeredBy: ADAPTER_DEFAULT,
       });
     });
 
@@ -368,9 +392,14 @@ describe('Ergenecore devtools envelope', () => {
     });
 
     describe('legacy validator', () => {
+      /** Core's prepared handle, carrying the validator's component name. */
+      const named = (name: string, handle: ValidatorHandler<any>['handle']) =>
+        ({ handle, override: false, name }) as ValidatorHandler<any>;
+
       const validator: BaseValidator<ValidationSchemaWithHook> = {
-        json: { handle: () => ({ schema: z.object({ title: z.string().min(1) }) }), override: false },
+        json: named('CreateNoteValidator', () => ({ schema: z.object({ title: z.string().min(1) }) })),
       };
+      const VALIDATOR: DevtoolsStep = { kind: 'validator', name: 'CreateNoteValidator.json' };
 
       const post = (body: unknown) =>
         fetch(`${baseUrl}/notes`, {
@@ -379,11 +408,33 @@ describe('Ergenecore devtools envelope', () => {
           body: JSON.stringify(body),
         });
 
-      it('steps the validator before the handler', async () => {
+      const createRoute = () =>
         route(
           '/notes',
           controller('NoteController.create', (ctx) => ctx.send({ created: true })),
           { method: HttpMethod.POST, validator },
+        );
+
+      it('steps the validator, named component.target, before the handler', async () => {
+        createRoute();
+
+        await boot();
+
+        expect((await post({ title: 'groceries' })).status).toBe(200);
+
+        const [record] = await settled(1);
+
+        expect(record.steps).toEqual([VALIDATOR, { kind: 'controller', name: 'NoteController.create' }]);
+      });
+
+      it('names the step after the target alone when the handle carries no component name', async () => {
+        route(
+          '/notes',
+          controller('NoteController.create', (ctx) => ctx.send({ created: true })),
+          {
+            method: HttpMethod.POST,
+            validator: { json: { handle: () => z.object({ title: z.string() }), override: false } },
+          },
         );
 
         await boot();
@@ -392,18 +443,11 @@ describe('Ergenecore devtools envelope', () => {
 
         const [record] = await settled(1);
 
-        expect(record.steps).toEqual([
-          { kind: 'validator', name: 'json' },
-          { kind: 'controller', name: 'NoteController.create' },
-        ]);
+        expect(record.steps[0]).toEqual({ kind: 'validator', name: 'json' });
       });
 
-      it('a failing validator reaches the adapter default with its 400', async () => {
-        route(
-          '/notes',
-          controller('NoteController.create', (ctx) => ctx.send({ created: true })),
-          { method: HttpMethod.POST, validator },
-        );
+      it('a failing validator answers its own 400: no adapter-default step', async () => {
+        createRoute();
 
         await boot();
 
@@ -412,19 +456,54 @@ describe('Ergenecore devtools envelope', () => {
         const [record] = await settled(1);
 
         expect(record.status).toBe(400);
-        expect(record.steps).toEqual([{ kind: 'validator', name: 'json' }, ADAPTER_DEFAULT]);
+        expect(record.steps).toEqual([VALIDATOR]);
+        expect(record.answeredBy).toEqual(VALIDATOR);
       });
 
-      it('a validator hook that answers is the last step', async () => {
+      it('an error handler that declines the failure leaves the answer with the validator', async () => {
+        createRoute();
+        adapter.onError((() => {
+          bus.step('config-onError', 'AppConfig.onError');
+        }) as any);
+
+        await boot();
+
+        expect((await post({ title: '' })).status).toBe(400);
+
+        const [record] = await settled(1);
+
+        expect(record.steps).toEqual([VALIDATOR, { kind: 'config-onError', name: 'AppConfig.onError' }]);
+        expect(record.answeredBy).toEqual(VALIDATOR);
+      });
+
+      it('an error handler that answers the failure keeps the answer, after the validator step', async () => {
+        const CATCH: DevtoolsStep = { kind: 'catch', name: 'ValidationHandlers.onInvalid' };
+
+        createRoute();
+        adapter.onError((_error, ctx) => {
+          bus.step(CATCH.kind, CATCH.name);
+
+          return ctx.send({ invalid: true }, 422);
+        });
+
+        await boot();
+
+        expect((await post({ title: '' })).status).toBe(422);
+
+        const [record] = await settled(1);
+
+        expect(record.steps).toEqual([VALIDATOR, CATCH]);
+        expect(record.answeredBy).toEqual(CATCH);
+      });
+
+      it('a validator hook that answers is the answering step', async () => {
         const hooked: BaseValidator<ValidationSchemaWithHook> = {
-          query: {
-            handle: () => ({
-              schema: z.object({ page: z.string() }),
-              hook: (_result, ctx) => ctx.send({ invalid: true }, 422),
-            }),
-            override: false,
-          },
+          query: named('ListNotesValidator', () => ({
+            schema: z.object({ page: z.string() }),
+            hook: (_result, ctx) => ctx.send({ invalid: true }, 422),
+          })),
         };
+        const QUERY: DevtoolsStep = { kind: 'validator', name: 'ListNotesValidator.query' };
 
         route(
           '/notes',
@@ -439,8 +518,89 @@ describe('Ergenecore devtools envelope', () => {
         const [record] = await settled(1);
 
         expect(record.status).toBe(422);
-        expect(record.steps).toEqual([{ kind: 'validator', name: 'query' }]);
+        expect(record.steps).toEqual([QUERY]);
+        expect(record.answeredBy).toEqual(QUERY);
       });
+
+      it('a failure behind a route middleware is still answered by the validator', async () => {
+        const middleware: BaseMiddleware<Context> = {
+          handle: async (_ctx, next) => {
+            bus.step('middleware', 'AuditMiddleware.handle');
+            await next();
+          },
+          override: false,
+        };
+
+        route(
+          '/notes',
+          controller('NoteController.create', (ctx) => ctx.send({ created: true })),
+          { method: HttpMethod.POST, validator, middlewares: [middleware] },
+        );
+
+        await boot();
+
+        expect((await post({ title: '' })).status).toBe(400);
+
+        const [record] = await settled(1);
+
+        expect(record.steps).toEqual([{ kind: 'middleware', name: 'AuditMiddleware.handle' }, VALIDATOR]);
+        expect(record.answeredBy).toEqual(VALIDATOR);
+      });
+    });
+
+    describe('context contract', () => {
+      class CreateNoteContext extends Context.define({ body: z.object({ title: z.string().min(1) }) }) {}
+
+      const CONTRACT: DevtoolsStep = { kind: 'validator', name: 'CreateNoteContext' };
+
+      const contractRoute = () =>
+        adapter.registerRoute({
+          staticServe: undefined,
+          validator: undefined,
+          method: HttpMethod.POST,
+          path: '/notes',
+          middlewares: [],
+          contextClass: CreateNoteContext,
+          handler: controller('NoteController.create', (ctx) => ctx.send({ created: true })) as any,
+        });
+
+      // Core records the contract's own step; the published core these tests run on does not.
+      it('a contract failure reaching the default response is answered by the contract validator', async () => {
+        contractRoute();
+
+        await boot();
+
+        const response = await fetch(`${baseUrl}/notes`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: '' }),
+        });
+
+        expect(response.status).toBe(400);
+
+        const [record] = await settled(1);
+
+        expect(record.steps).not.toContainEqual(ADAPTER_DEFAULT);
+        expect(record.answeredBy).toEqual(CONTRACT);
+      });
+    });
+
+    it('a ValidationError a fast-path handler throws itself stays with the adapter default', async () => {
+      route(
+        '/notes',
+        controller('NoteController.find', () => {
+          throw new ValidationError(z.string().safeParse(1).error!, 'query');
+        }),
+      );
+
+      await boot();
+
+      expect((await fetch(`${baseUrl}/notes`)).status).toBe(400);
+
+      const [record] = await settled(1);
+
+      expect(record.steps).toEqual([{ kind: 'controller', name: 'NoteController.find' }, ADAPTER_DEFAULT]);
+      expect(record.answeredBy).toEqual(ADAPTER_DEFAULT);
     });
 
     describe('middleware answering false', () => {
