@@ -138,9 +138,9 @@ interface ValidationStep {
   observed?: DevtoolsStep;
 }
 
-/** The validator class is behind a bound handle; core may name its component on the handle itself. */
-function validatorStepName(handler: object, target: string): string {
-  const component = (handler as { name?: unknown }).name;
+/** Read structurally: the published core's RouteParams does not declare `validatorName`. */
+function validatorStepName(route: object, target: string): string {
+  const component = (route as { validatorName?: unknown }).validatorName;
 
   return typeof component === 'string' && component !== '' ? `${component}.${target}` : target;
 }
@@ -1470,7 +1470,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       const devtools = this.devtools;
       const observed: DevtoolsStep | undefined = devtools && {
         kind: 'validator',
-        name: validatorStepName(handler, target),
+        name: validatorStepName(route, target),
       };
       const step: ValidationStep = {
         target,

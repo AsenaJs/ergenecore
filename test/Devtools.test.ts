@@ -64,16 +64,24 @@ describe('Ergenecore devtools envelope', () => {
   const route = (
     path: string,
     handler: (ctx: Context) => unknown,
-    extra: { method?: HttpMethod; middlewares?: BaseMiddleware<Context>[]; validator?: BaseValidator<any> } = {},
+    extra: {
+      method?: HttpMethod;
+      middlewares?: BaseMiddleware<Context>[];
+      validator?: BaseValidator<any>;
+      validatorName?: string;
+    } = {},
   ) => {
-    adapter.registerRoute({
+    const params = {
       staticServe: undefined,
       validator: extra.validator,
+      validatorName: extra.validatorName,
       method: extra.method ?? HttpMethod.GET,
       path,
       middlewares: extra.middlewares ?? [],
       handler: handler as any,
-    });
+    };
+
+    adapter.registerRoute(params);
   };
 
   /** What core's prepared controller wrapper records before the handler runs. */
@@ -392,12 +400,20 @@ describe('Ergenecore devtools envelope', () => {
     });
 
     describe('legacy validator', () => {
-      /** Core's prepared handle, carrying the validator's component name. */
-      const named = (name: string, handle: ValidatorHandler<any>['handle']) =>
-        ({ handle, override: false, name }) as ValidatorHandler<any>;
+      class CreateNoteValidator {
+        public json() {
+          return { schema: z.object({ title: z.string().min(1) }) };
+        }
+      }
+
+      /** Exactly what core's PrepareValidatorService hands over: a bound method, no name. */
+      const prepared = <T extends object>(instance: T, key: keyof T & string): ValidatorHandler<any> => ({
+        handle: (instance[key] as () => unknown).bind(instance) as ValidatorHandler<any>['handle'],
+        override: false,
+      });
 
       const validator: BaseValidator<ValidationSchemaWithHook> = {
-        json: named('CreateNoteValidator', () => ({ schema: z.object({ title: z.string().min(1) }) })),
+        json: prepared(new CreateNoteValidator(), 'json'),
       };
       const VALIDATOR: DevtoolsStep = { kind: 'validator', name: 'CreateNoteValidator.json' };
 
@@ -412,7 +428,7 @@ describe('Ergenecore devtools envelope', () => {
         route(
           '/notes',
           controller('NoteController.create', (ctx) => ctx.send({ created: true })),
-          { method: HttpMethod.POST, validator },
+          { method: HttpMethod.POST, validator, validatorName: 'CreateNoteValidator' },
         );
 
       it('steps the validator, named component.target, before the handler', async () => {
@@ -427,14 +443,11 @@ describe('Ergenecore devtools envelope', () => {
         expect(record.steps).toEqual([VALIDATOR, { kind: 'controller', name: 'NoteController.create' }]);
       });
 
-      it('names the step after the target alone when the handle carries no component name', async () => {
+      it('names the step after the target alone when the route carries no validator name', async () => {
         route(
           '/notes',
           controller('NoteController.create', (ctx) => ctx.send({ created: true })),
-          {
-            method: HttpMethod.POST,
-            validator: { json: { handle: () => z.object({ title: z.string() }), override: false } },
-          },
+          { method: HttpMethod.POST, validator },
         );
 
         await boot();
@@ -497,18 +510,24 @@ describe('Ergenecore devtools envelope', () => {
       });
 
       it('a validator hook that answers is the answering step', async () => {
+        class ListNotesValidator {
+          public query(): ValidationSchemaWithHook {
+            return {
+              schema: z.object({ page: z.string() }),
+              hook: (_result, ctx) => ctx.send({ invalid: true }, 422),
+            };
+          }
+        }
+
         const hooked: BaseValidator<ValidationSchemaWithHook> = {
-          query: named('ListNotesValidator', () => ({
-            schema: z.object({ page: z.string() }),
-            hook: (_result, ctx) => ctx.send({ invalid: true }, 422),
-          })),
+          query: prepared(new ListNotesValidator(), 'query'),
         };
         const QUERY: DevtoolsStep = { kind: 'validator', name: 'ListNotesValidator.query' };
 
         route(
           '/notes',
           controller('NoteController.list', (ctx) => ctx.send([])),
-          { validator: hooked },
+          { validator: hooked, validatorName: 'ListNotesValidator' },
         );
 
         await boot();
@@ -534,7 +553,7 @@ describe('Ergenecore devtools envelope', () => {
         route(
           '/notes',
           controller('NoteController.create', (ctx) => ctx.send({ created: true })),
-          { method: HttpMethod.POST, validator, middlewares: [middleware] },
+          { method: HttpMethod.POST, validator, validatorName: 'CreateNoteValidator', middlewares: [middleware] },
         );
 
         await boot();
