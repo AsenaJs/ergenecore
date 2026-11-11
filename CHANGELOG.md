@@ -1,5 +1,16 @@
 # @asenajs/ergenecore
 
+## 5.1.0
+
+### Minor Changes
+
+- 4b570f7: Report requests to the asena console when it is attached.
+
+### Patch Changes
+
+- f22db64: Accept @asenajs/asena 0.13 as a peer.
+- 3dbd5a5: A thrown value the error log cannot serialise as JSON - a `bigint`, an object with a cycle - is answered with the 500 envelope and logged like any other failure. `throw undefined` is logged with the message `undefined`.
+
 ## 5.0.3
 
 ### Patch Changes
