@@ -1,5 +1,6 @@
 /**
- * The devtools bus `asena console` hands the adapter through `attachDevtools()`.
+ * The devtools bus as core hands it to the adapter through `attachDevtools()`: scoped to one
+ * server, so a record opened through it is reported as that server's.
  *
  * Declared here rather than imported: the adapter builds against published cores, which do not
  * export the bus type, and a core that never attaches devtools must keep working.

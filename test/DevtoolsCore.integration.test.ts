@@ -72,4 +72,67 @@ describe.skipIf(!hasDevtools)('Ergenecore in a process asena console started', (
     expect(report.records).toEqual([]);
     expect(report.warnings.some((warning) => warning.includes('devtools agent not attached'))).toBe(true);
   });
+
+  // Both servers answer the same paths, so only the scope each adapter was handed can tell their records apart.
+  test('two servers in one process: each request is reported under the server that served it', async () => {
+    const messages: { type: string; payload: any }[] = [];
+
+    child = Bun.spawn(['bun', join(import.meta.dir, 'fixtures', 'devtools-two-servers-child.ts')], {
+      cwd: join(import.meta.dir, '..'),
+      env: { ...process.env, NODE_ENV: 'development' },
+      stdout: 'ignore',
+      stderr: 'inherit',
+      ipc: (message) => messages.push(message as { type: string; payload: any }),
+    });
+
+    const received = async (type: string, count: number): Promise<any[]> => {
+      const ofType = () => messages.filter((message) => message.type === type).map((message) => message.payload);
+
+      for (let i = 0; i < 400 && ofType().length < count; i++) {
+        await Bun.sleep(25);
+      }
+
+      return ofType();
+    };
+
+    const [first, second] = await received('hello', 2);
+
+    expect(first.adapter).toBe('Ergenecore');
+    expect(second.adapter).toBe('Ergenecore');
+    expect(second.serverId).not.toBe(first.serverId);
+    expect(second.port).not.toBe(first.port);
+
+    const get = async (hello: { port: number }, path: string) =>
+      (await fetch(`http://localhost:${hello.port}${path}`)).status;
+
+    expect(
+      await Promise.all([
+        get(first, '/notes/1'),
+        get(second, '/notes/1'),
+        get(second, '/missing'),
+        get(first, '/notes/failing'),
+        get(first, '/missing'),
+        get(second, '/notes/2'),
+      ]),
+    ).toEqual([200, 200, 404, 500, 404, 200]);
+
+    const records = await received('request', 6);
+    const reportedBy = (hello: { serverId: string }) =>
+      records
+        .filter((record) => record.serverId === hello.serverId)
+        .map((record) => `${record.path} ${record.status} ${record.answeredBy.kind}:${record.answeredBy.name}`)
+        .sort();
+
+    expect(records).toHaveLength(6);
+    expect(reportedBy(first)).toEqual([
+      '/missing 404 adapter-default:Ergenecore',
+      '/notes/1 200 controller:NoteController.find',
+      '/notes/failing 500 adapter-default:Ergenecore',
+    ]);
+    expect(reportedBy(second)).toEqual([
+      '/missing 404 adapter-default:Ergenecore',
+      '/notes/1 200 controller:ArchiveController.find',
+      '/notes/2 200 controller:ArchiveController.find',
+    ]);
+  });
 });
