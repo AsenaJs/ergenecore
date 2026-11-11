@@ -26,6 +26,8 @@ export interface DevtoolsStep {
 export type DevtoolsRecord = object;
 
 export interface DevtoolsBus {
+  /** True for as long as records are collected; it can turn false under a running server. */
+  readonly enabled: boolean;
   open(method: string, path: string): DevtoolsRecord;
   run<T>(record: DevtoolsRecord, fn: () => T): T;
   step(kind: DevtoolsStepKind, name: string): void;

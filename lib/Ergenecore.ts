@@ -1225,6 +1225,8 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     const producedBy = this.producedBy;
 
     return (req: Request): Response | Promise<Response> => {
+      if (!bus.enabled) return handler(req);
+
       const record = bus.open(req.method, requestPathname(req.url));
       let result: Response | Promise<Response>;
 

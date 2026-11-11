@@ -35,9 +35,15 @@ interface ClosedRecord extends FakeRecord {
 class FakeBus implements DevtoolsBus {
   public readonly closed: ClosedRecord[] = [];
 
+  public enabled = true;
+
+  public opened = 0;
+
   private readonly storage = new AsyncLocalStorage<FakeRecord>();
 
   public open(method: string, path: string): FakeRecord {
+    this.opened += 1;
+
     return { method, path, steps: [] };
   }
 
@@ -326,21 +332,24 @@ describe('Ergenecore devtools envelope', () => {
     });
 
     it('a failure escaping the adapter closes the record as a 500 from the adapter', async () => {
-      adapter = new Ergenecore(logger, new ErgenecoreWebsocketAdapter(logger), true);
+      const failingLogger: ServerLogger = {
+        ...logger,
+        error: () => {
+          throw new TypeError('log sink is gone');
+        },
+      };
+
+      adapter = new Ergenecore(failingLogger, new ErgenecoreWebsocketAdapter(logger), true);
       adapter.attachDevtools(bus);
 
-      // The error log serialises a thrown non-Error with JSON.stringify, which throws on a cycle.
-      const circular: Record<string, unknown> = {};
-
-      circular.self = circular;
-      route('/cycle', () => {
-        throw circular;
+      route('/boom', () => {
+        throw new Error('boom');
       });
 
       // Called directly: a rejection reaching Bun.serve fails the test run on its own.
       const routes = await adapter['buildBunRoutes']();
 
-      await expect(routes['/cycle'].GET(new Request('http://localhost/cycle'))).rejects.toThrow(TypeError);
+      await expect(routes['/boom'].GET(new Request('http://localhost/boom'))).rejects.toThrow(TypeError);
 
       const [record] = await settled(1);
 
@@ -710,6 +719,120 @@ describe('Ergenecore devtools envelope', () => {
         { kind: 'controller', name: 'NoteController.fast' },
         { kind: 'catch', name: 'after-sleep-2' },
       ]);
+    });
+
+    describe('a handler returning a thenable that is not a promise', () => {
+      const thenable = (settle: () => Response): PromiseLike<Response> => ({
+        then: (onFulfilled, onRejected) => Bun.sleep(1).then(settle).then(onFulfilled, onRejected),
+      });
+
+      it('closes the record once, with the status it settles to', async () => {
+        route(
+          '/lazy',
+          controller('NoteController.lazy', (ctx) => thenable(() => ctx.send({ lazy: true }, 202) as Response)),
+        );
+
+        await boot();
+
+        expect((await fetch(`${baseUrl}/lazy`)).status).toBe(202);
+
+        await settled(1);
+        await Bun.sleep(10);
+
+        expect(bus.closed).toHaveLength(1);
+        expect(bus.closed[0].status).toBe(202);
+        expect(bus.closed[0].answeredBy).toEqual({ kind: 'controller', name: 'NoteController.lazy' });
+      });
+
+      it('closes a rejection as the adapter default, behind a middleware too', async () => {
+        const middleware: BaseMiddleware<Context> = { handle: async (_ctx, next) => next(), override: false };
+        const failing = controller('NoteController.lazy', () =>
+          thenable(() => {
+            throw new Error('lazy boom');
+          }),
+        );
+
+        route('/lazy', failing);
+        route('/guarded-lazy', failing, { middlewares: [middleware] });
+
+        await boot();
+
+        expect((await fetch(`${baseUrl}/lazy`)).status).toBe(500);
+        expect((await fetch(`${baseUrl}/guarded-lazy`)).status).toBe(500);
+
+        await settled(2);
+        await Bun.sleep(10);
+
+        expect(bus.closed.map(({ path, status, answeredBy }) => ({ path, status, answeredBy }))).toEqual([
+          { path: '/lazy', status: 500, answeredBy: ADAPTER_DEFAULT },
+          { path: '/guarded-lazy', status: 500, answeredBy: ADAPTER_DEFAULT },
+        ]);
+      });
+    });
+
+    describe('while the bus is disabled', () => {
+      const validator: BaseValidator<any> = {
+        json: { handle: () => z.object({ title: z.string() }), override: false },
+      };
+
+      beforeEach(() => {
+        route('/ok', (ctx) => ctx.send('ok'));
+        route('/boom', () => {
+          throw new Error('boom');
+        });
+        route('/notes', (ctx) => ctx.send('ok'), { method: HttpMethod.POST, validator });
+      });
+
+      const everyOutcome = async (): Promise<number[]> => {
+        const invalid = fetch(`${baseUrl}/notes`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: 1 }),
+        });
+        const responses = await Promise.all([
+          fetch(`${baseUrl}/ok`),
+          fetch(`${baseUrl}/boom`),
+          fetch(`${baseUrl}/missing`),
+          invalid,
+        ]);
+
+        return responses.map((response) => response.status);
+      };
+
+      it('serves every outcome and opens no record', async () => {
+        bus.enabled = false;
+
+        await boot();
+
+        expect(await everyOutcome()).toEqual([200, 500, 404, 400]);
+
+        await Bun.sleep(10);
+
+        expect(bus.opened).toBe(0);
+        expect(bus.closed).toEqual([]);
+      });
+
+      it('stops recording when the bus goes off under a running server, and resumes with it', async () => {
+        await boot();
+
+        expect((await fetch(`${baseUrl}/ok`)).status).toBe(200);
+        await settled(1);
+
+        bus.enabled = false;
+        expect(await everyOutcome()).toEqual([200, 500, 404, 400]);
+        await Bun.sleep(10);
+
+        expect(bus.opened).toBe(1);
+        expect(bus.closed).toHaveLength(1);
+
+        bus.enabled = true;
+        expect((await fetch(`${baseUrl}/missing`)).status).toBe(404);
+
+        const records = await settled(2);
+
+        expect(records).toHaveLength(2);
+        expect(records[1].answeredBy).toEqual(ADAPTER_DEFAULT);
+      });
     });
   });
 });
