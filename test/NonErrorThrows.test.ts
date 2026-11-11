@@ -104,7 +104,7 @@ describe('a thrown value that is not an Error', () => {
       const booted = await boot(logger, raise);
 
       adapter = booted.adapter;
-      adapter.onError((() => undefined) as any);
+      adapter.onError(() => undefined);
 
       for (const path of paths) {
         const response = await fetch(`${booted.baseUrl}${path}`);

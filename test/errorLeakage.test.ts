@@ -120,7 +120,7 @@ describe('an unhandled error does not leak its message to the client', () => {
 
     // Returning nothing is how an application says "not mine" - the adapter's fallback answers,
     // and that fallback is the leaking branch.
-    adapter.onError(() => undefined as any);
+    adapter.onError(() => undefined);
 
     adapter.registerRoute({
       method: HttpMethod.GET,
