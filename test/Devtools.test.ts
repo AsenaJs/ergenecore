@@ -39,6 +39,8 @@ class FakeBus implements DevtoolsBus {
 
   public opened = 0;
 
+  public stepped = 0;
+
   private readonly storage = new AsyncLocalStorage<FakeRecord>();
 
   public open(method: string, path: string): FakeRecord {
@@ -52,6 +54,7 @@ class FakeBus implements DevtoolsBus {
   }
 
   public step(kind: DevtoolsStepKind, name: string): void {
+    this.stepped += 1;
     this.storage.getStore()?.steps.push({ kind, name });
   }
 
@@ -810,6 +813,18 @@ describe('Ergenecore devtools envelope', () => {
 
         expect(bus.opened).toBe(0);
         expect(bus.closed).toEqual([]);
+      });
+
+      it('steps nothing: neither default answer nor the legacy validator reaches the bus', async () => {
+        bus.enabled = false;
+
+        await boot();
+
+        expect(await everyOutcome()).toEqual([200, 500, 404, 400]);
+
+        await Bun.sleep(10);
+
+        expect(bus.stepped).toBe(0);
       });
 
       it('stops recording when the bus goes off under a running server, and resumes with it', async () => {

@@ -305,7 +305,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * Core calls this before any route is registered, and only in a process the console spawned.
    * Routes are wrapped when `start()` builds them; without this call they are not wrapped at all.
    *
-   * @param bus - The server's devtools bus
+   * @param bus - The devtools bus as this server sees it: its records are reported as this server's
    */
   public attachDevtools(bus: DevtoolsBus): void {
     this.devtools = bus;
@@ -781,7 +781,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       }
     }
 
-    this.devtools?.step('adapter-default', this.name);
+    this.stepAdapterDefault();
     this.logUnmatched(path, method);
 
     return new Response(NOT_FOUND, {
@@ -879,7 +879,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     const failedAt = this.producedBy?.get(error as object);
 
     if (!failedAt) {
-      this.devtools?.step('adapter-default', this.name);
+      this.stepAdapterDefault();
     }
 
     // Reached when there is no handler, when it declined, or when it threw - in every one of
@@ -1218,6 +1218,12 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     };
   }
 
+  private stepAdapterDefault(): void {
+    if (this.devtools?.enabled) {
+      this.devtools.step('adapter-default', this.name);
+    }
+  }
+
   /** The request entry itself without devtools, so the served closure is exactly the one built. */
   private traced(
     handler: (req: Request) => Response | Promise<Response>,
@@ -1489,7 +1495,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         extract:
           devtools && observed
             ? (context) => {
-                devtools.step(observed.kind, observed.name);
+                if (devtools.enabled) devtools.step(observed.kind, observed.name);
 
                 return extract(context);
               }
