@@ -33,6 +33,7 @@
     "lib/test/**/*.ts",
     "**/*.test.ts",
     "**/*.spec.ts",
+    "test/fixtures",
     "benchmark",
     "typespec",
     "*.config.*"

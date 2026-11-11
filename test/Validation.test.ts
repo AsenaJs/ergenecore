@@ -1170,7 +1170,7 @@ describe('Validation System', () => {
       // Before the envelope moved onto `ValidationError.getResponse()`, this fell back to
       // `HttpException`'s bare `Validation failed` text - so the body depended on whether an
       // unrelated hook existed, which is exactly what the single path removed.
-      adapter.onError((() => undefined) as any);
+      adapter.onError(() => undefined);
 
       registerSignup();
 

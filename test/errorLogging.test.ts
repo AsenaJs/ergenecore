@@ -47,7 +47,7 @@ const boot = async (logger: ServerLogger, options: BootOptions = {}) => {
     );
   } else if (onError === 'declines') {
     // The ordinary way to say "not mine, use the default"
-    adapter.onError((() => undefined) as any);
+    adapter.onError(() => undefined);
   } else if (onError === 'throws') {
     adapter.onError(() => {
       throw new Error('handler exploded');
