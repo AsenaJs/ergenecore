@@ -106,6 +106,17 @@ function isNormalizedRelativePath(value: string): boolean {
   return true;
 }
 
+/** JSON first: `String()` on a plain object says only "[object Object]". Runs on the error path, so it never throws. */
+function describeThrown(thrown: unknown): string {
+  if (thrown === undefined) return 'undefined';
+
+  try {
+    return JSON.stringify(thrown) ?? Object.prototype.toString.call(thrown);
+  } catch {
+    return typeof thrown === 'bigint' ? thrown.toString() : Object.prototype.toString.call(thrown);
+  }
+}
+
 function requestPathname(url: string): string {
   const authority = url.indexOf('//');
   const start = authority === -1 ? -1 : url.indexOf('/', authority + 2);
@@ -816,9 +827,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     const isServerError = status >= 500;
 
     const meta = {
-      // A thrown non-Error is rare but legal, and `String(value)` on a plain object yields
-      // "[object Object]" - which tells an operator nothing. Serialise it instead.
-      message: error instanceof Error ? error.message : JSON.stringify(error),
+      message: error instanceof Error ? error.message : describeThrown(error),
       path: new URL(context.req.url).pathname,
       method: context.req.method,
       status,
