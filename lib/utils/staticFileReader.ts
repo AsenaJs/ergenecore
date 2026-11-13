@@ -210,7 +210,7 @@ export class StaticFileReader {
     }
 
     while (this.files.size >= this.maxOpen) {
-      const [oldestPath, oldest] = this.files.entries().next().value as [string, OpenStaticFile];
+      const [oldestPath, oldest] = this.files.entries().next().value!;
 
       this.forget(oldestPath, oldest);
     }
