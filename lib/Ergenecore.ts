@@ -10,7 +10,6 @@ import {
   isHttpException,
   isValidationError,
   type RouteParams,
-  VALIDATOR_METHODS,
   type ValidatorHandler,
   ASENA_CONTEXT_CONTRACT,
   assertContextAdapter,
@@ -30,6 +29,7 @@ import type { DevtoolsBus, DevtoolsStep } from './types/Devtools';
 import { HttpException, ValidationError } from './errors';
 import { shouldApplyMiddleware } from '@asenajs/asena/utils';
 import { regularFileStats, StaticFileReader, staticFileHeaders } from './utils/staticFileReader';
+import { VALIDATOR_TARGETS } from './utils/validatorTargets';
 import type { Stats } from 'fs';
 
 /**
@@ -1481,9 +1481,9 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
   /** Prepare each legacy validator target once for this route, preserving method order. */
   private async prepareValidationSteps(route: RouteRegistration): Promise<ValidationStep[]> {
     const steps: ValidationStep[] = [];
-    for (const target of VALIDATOR_METHODS) {
+    for (const target of VALIDATOR_TARGETS) {
       const handler: ValidatorHandler<ValidationSchemaWithHook | ValidationSchema> | undefined =
-        route.validator && Reflect.get(route.validator, target);
+        route.validator?.[target];
       if (!handler || typeof handler.handle !== 'function') continue;
       const extract = this.createValidationExtractor(target);
       const devtools = this.devtools;
@@ -1614,7 +1614,6 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
   private createValidationExtractor(target: string): (context: Context) => Promise<any> | any {
     switch (target) {
       case 'json':
-      case 'body':
         return (context) => context.getBody();
 
       case 'query': {
