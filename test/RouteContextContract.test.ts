@@ -64,6 +64,7 @@ describe('Ergenecore route context contracts', () => {
       contextClass: RouteContext,
       middlewares: [
         {
+          override: false,
           handle: async (ctx: Context, next: () => Promise<void>) => {
             order.push('middleware');
             await ctx.getBody();
@@ -86,7 +87,7 @@ describe('Ergenecore route context contracts', () => {
           frozen: Object.isFrozen(route.input),
         });
       },
-    } as any);
+    });
     const server = await adapter.start();
     const response = await fetch(`http://localhost:${server.port}/contract/42?tag=a&tag=b`, {
       method: 'POST',
@@ -126,7 +127,7 @@ describe('Ergenecore route context contracts', () => {
         const route = ctx as RouteContext;
         return route.send({ bodyIsUndefined: (await route.getBody()) === undefined, query: route.input.query });
       },
-    } as any);
+    });
     const server = await adapter.start();
     const post = (name: string, wait: number) =>
       fetch(`http://localhost:${server.port}/concurrent?name=${name}`, {
@@ -157,7 +158,7 @@ describe('Ergenecore route context contracts', () => {
         const route = ctx as FormContext;
         return route.send({ input: route.input.form, parsed: await route.getParseBody() });
       },
-    } as any);
+    });
     const server = await adapter.start();
     const response = await fetch(`http://localhost:${server.port}/form`, {
       method: 'POST',
@@ -193,7 +194,7 @@ describe('Ergenecore route context contracts', () => {
         handled++;
         return ctx.send({ ok: true });
       },
-    } as any);
+    });
     const server = await adapter.start();
     const url = `http://localhost:${server.port}/invalid`;
     expect(
@@ -252,9 +253,9 @@ describe('Ergenecore route context contracts', () => {
         path,
         validatorCache,
         middlewares: [],
-        validator: { json: { handle: factory } },
+        validator: { json: { handle: factory, override: false } },
         handler: async (ctx: Context) => ctx.send(await ctx.getBody()),
-      } as any);
+      });
     }
     const server = await adapter.start();
     expect(cachedFactory).toHaveBeenCalledTimes(1);
@@ -292,9 +293,9 @@ describe('Ergenecore route context contracts', () => {
         path,
         validatorCache: cache,
         middlewares: [],
-        validator: { json: { handle: factory } },
+        validator: { json: { handle: factory, override: false } },
         handler: async (ctx: Context) => ctx.send(await ctx.getBody()),
-      } as any);
+      });
     }
     const server = await adapter.start();
     expect(factory).toHaveBeenCalledTimes(1);
@@ -319,13 +320,14 @@ describe('Ergenecore route context contracts', () => {
       middlewares: [],
       validator: {
         query: {
+          override: false,
           handle: async () => {
             throw new Error('factory failed');
           },
         },
       },
       handler: async (ctx: Context) => ctx.send({ ok: true }),
-    } as any);
+    });
     await expect(adapter.start()).rejects.toThrow('GET /broken (query)');
   });
 });
