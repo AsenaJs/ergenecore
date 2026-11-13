@@ -138,7 +138,7 @@ function requestPathname(url: string): string {
 }
 
 // The core declares staticServe and validator as required; the adapter reads both as optional.
-type RouteRegistration = Omit<
+export type ErgenecoreRouteParams = Omit<
   RouteParams<Context, ValidationSchema | ValidationSchemaWithHook>,
   'staticServe' | 'validator'
 > &
@@ -198,7 +198,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * Route queue for deferred registration
    * Routes are queued during initialization and built when server starts
    */
-  private routeQueue: RouteRegistration[] = [];
+  private routeQueue: ErgenecoreRouteParams[] = [];
 
   /**
    * WebSocket route queue for deferred registration
@@ -389,7 +389,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * });
    * ```
    */
-  public registerRoute(params: RouteRegistration): void {
+  public registerRoute(params: ErgenecoreRouteParams): void {
     const label = `${params.method} ${params.path}`;
     if (params.validatorCache !== undefined && typeof params.validatorCache !== 'boolean') {
       throw new Error(`${label}: validatorCache must be a boolean`);
@@ -590,7 +590,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     // its only product was a `commonMiddlewares` array that createRouteHandler ignored - and
     // the comparison behind it was broken anyway (see the removed extractCommonMiddlewares in
     // HonoAdapter, where the same code was live and swapped guards between sibling routes).
-    const routesByPath = new Map<string, RouteRegistration[]>();
+    const routesByPath = new Map<string, ErgenecoreRouteParams[]>();
 
     for (const route of this.routeQueue) {
       const pathRoutes = routesByPath.get(route.path) ?? [];
@@ -1184,7 +1184,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * @param route - Route parameters
    * @returns Bun-compatible fast path handler
    */
-  private createFastPathHandler(route: RouteRegistration) {
+  private createFastPathHandler(route: ErgenecoreRouteParams) {
     // Deliberately one closure. There used to be a second, picked here by `if (!this.errorHandler)`
     // - and once both were routed through `respondToError` the two bodies were identical. It was
     // also the only place the adapter read `errorHandler` at *build* time rather than per request,
@@ -1292,7 +1292,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * @returns Bun-compatible route handler
    */
   private createRouteHandler(
-    route: RouteRegistration,
+    route: ErgenecoreRouteParams,
     validateContract?: (context: Context) => Promise<void>,
     validationSteps: ValidationStep[] = [],
   ) {
@@ -1397,7 +1397,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     }
   }
 
-  private runRouteHandler(route: RouteRegistration, context: Context): Response | Promise<Response> {
+  private runRouteHandler(route: ErgenecoreRouteParams, context: Context): Response | Promise<Response> {
     const response: unknown = route.handler(context);
 
     if (isThenable(response)) {
@@ -1480,7 +1480,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
   }
 
   /** Prepare each legacy validator target once for this route, preserving method order. */
-  private async prepareValidationSteps(route: RouteRegistration): Promise<ValidationStep[]> {
+  private async prepareValidationSteps(route: ErgenecoreRouteParams): Promise<ValidationStep[]> {
     const steps: ValidationStep[] = [];
     for (const target of validatorTargetsOf(VALIDATOR_METHODS)) {
       const handler: ValidatorHandler<ValidationSchemaWithHook | ValidationSchema> | undefined =

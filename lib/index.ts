@@ -23,7 +23,7 @@
  */
 
 // Core adapter
-export { Ergenecore } from './Ergenecore';
+export { Ergenecore, type ErgenecoreRouteParams } from './Ergenecore';
 export { ErgenecoreContextWrapper } from './ErgenecoreContextWrapper';
 export { ErgenecoreWebsocketAdapter } from './ErgenecoreWebsocketAdapter';
 
