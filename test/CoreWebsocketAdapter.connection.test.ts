@@ -2,16 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { ErgenecoreWebsocketAdapter } from '../lib';
 import type { ServerLogger } from '@asenajs/asena/logger';
 import type { AsenaWebSocketService } from '@asenajs/asena/web-socket';
-
-function websocketHandlers(adapter: ErgenecoreWebsocketAdapter) {
-  const { open, message, close } = adapter.websocket;
-
-  if (!open || !message || !close) {
-    throw new Error('prepareWebSocket() did not install the websocket handlers');
-  }
-
-  return { open, message, close };
-}
+import { websocketHandlers } from './fixtures/websocket-handlers';
 
 // Mock logger
 const mockLogger: ServerLogger = {
