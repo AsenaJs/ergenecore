@@ -418,10 +418,10 @@ export class RateLimiterMiddleware extends MiddlewareService {
       };
 
       if (this.buckets.size >= this.maxBuckets) {
-        const oldest = this.buckets.keys().next().value;
+        const oldest = this.buckets.keys().next();
 
-        if (oldest !== undefined) {
-          this.buckets.delete(oldest);
+        if (!oldest.done) {
+          this.buckets.delete(oldest.value);
         }
       }
     }
