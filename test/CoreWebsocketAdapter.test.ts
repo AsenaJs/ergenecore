@@ -3,6 +3,16 @@ import { ErgenecoreWebsocketAdapter } from '../lib';
 import type { ServerLogger } from '@asenajs/asena/logger';
 import type { AsenaWebSocketService, WSOptions } from '@asenajs/asena/web-socket';
 
+function websocketHandlers(adapter: ErgenecoreWebsocketAdapter) {
+  const { open, message, close } = adapter.websocket;
+
+  if (!open || !message || !close) {
+    throw new Error('prepareWebSocket() did not install the websocket handlers');
+  }
+
+  return { open, message, close };
+}
+
 // Mock logger
 const mockLogger: ServerLogger = {
   info: mock(() => {}),
@@ -197,7 +207,7 @@ describe('CoreWebsocketAdapter - Namespace Registration', () => {
         readyState: WebSocket.OPEN,
       };
 
-      await adapter.websocket.open(mockWs);
+      await websocketHandlers(adapter).open(mockWs);
 
       expect(onOpenMock).toHaveBeenCalled();
     });
@@ -220,7 +230,7 @@ describe('CoreWebsocketAdapter - Namespace Registration', () => {
       };
       const testMessage = 'Hello, WebSocket!';
 
-      await adapter.websocket.message(mockWs, testMessage);
+      await websocketHandlers(adapter).message(mockWs, testMessage);
 
       expect(onMessageMock).toHaveBeenCalled();
     });
@@ -244,7 +254,7 @@ describe('CoreWebsocketAdapter - Namespace Registration', () => {
       const code = 1000;
       const reason = 'Normal closure';
 
-      await adapter.websocket.close(mockWs, code, reason);
+      await websocketHandlers(adapter).close(mockWs, code, reason);
 
       expect(onCloseMock).toHaveBeenCalled();
     });
@@ -266,9 +276,9 @@ describe('CoreWebsocketAdapter - Namespace Registration', () => {
       // Should not throw
       // eslint-disable-next-line max-nested-callbacks
       expect(async () => {
-        await adapter.websocket.open(mockWs);
-        await adapter.websocket.message(mockWs, 'test');
-        await adapter.websocket.close(mockWs, 1000, 'test');
+        await websocketHandlers(adapter).open(mockWs);
+        await websocketHandlers(adapter).message(mockWs, 'test');
+        await websocketHandlers(adapter).close(mockWs, 1000, 'test');
       }).not.toThrow();
     });
 
@@ -296,7 +306,7 @@ describe('CoreWebsocketAdapter - Namespace Registration', () => {
         close: mock(() => {}),
       };
 
-      await adapter.websocket.message(mockWs, 'test');
+      await websocketHandlers(adapter).message(mockWs, 'test');
 
       expect(mockLogger.error).toHaveBeenCalled();
       expect(mockWs.send).toHaveBeenCalled(); // Error message sent to client

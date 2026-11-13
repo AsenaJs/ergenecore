@@ -64,14 +64,14 @@ describe('Ergenecore route context contracts', () => {
       contextClass: RouteContext,
       middlewares: [
         {
-          handle: async (ctx, next) => {
+          handle: async (ctx: Context, next: () => Promise<void>) => {
             order.push('middleware');
             await ctx.getBody();
             return next();
           },
         },
       ],
-      handler: async (ctx) => {
+      handler: async (ctx: Context) => {
         order.push('handler');
         const route = ctx as RouteContext;
         return route.send({
@@ -122,7 +122,7 @@ describe('Ergenecore route context contracts', () => {
       path: '/concurrent',
       contextClass: RouteContext,
       middlewares: [],
-      handler: async (ctx) => {
+      handler: async (ctx: Context) => {
         const route = ctx as RouteContext;
         return route.send({ bodyIsUndefined: (await route.getBody()) === undefined, query: route.input.query });
       },
@@ -153,7 +153,7 @@ describe('Ergenecore route context contracts', () => {
       path: '/form',
       contextClass: FormContext,
       middlewares: [],
-      handler: async (ctx) => {
+      handler: async (ctx: Context) => {
         const route = ctx as FormContext;
         return route.send({ input: route.input.form, parsed: await route.getParseBody() });
       },
@@ -189,7 +189,7 @@ describe('Ergenecore route context contracts', () => {
       path: '/invalid',
       contextClass: RouteContext,
       middlewares: [],
-      handler: async (ctx) => {
+      handler: async (ctx: Context) => {
         handled++;
         return ctx.send({ ok: true });
       },
@@ -253,7 +253,7 @@ describe('Ergenecore route context contracts', () => {
         validatorCache,
         middlewares: [],
         validator: { json: { handle: factory } },
-        handler: async (ctx) => ctx.send(await ctx.getBody()),
+        handler: async (ctx: Context) => ctx.send(await ctx.getBody()),
       } as any);
     }
     const server = await adapter.start();
@@ -293,7 +293,7 @@ describe('Ergenecore route context contracts', () => {
         validatorCache: cache,
         middlewares: [],
         validator: { json: { handle: factory } },
-        handler: async (ctx) => ctx.send(await ctx.getBody()),
+        handler: async (ctx: Context) => ctx.send(await ctx.getBody()),
       } as any);
     }
     const server = await adapter.start();
@@ -324,7 +324,7 @@ describe('Ergenecore route context contracts', () => {
           },
         },
       },
-      handler: async (ctx) => ctx.send({ ok: true }),
+      handler: async (ctx: Context) => ctx.send({ ok: true }),
     } as any);
     await expect(adapter.start()).rejects.toThrow('GET /broken (query)');
   });
