@@ -10,6 +10,7 @@ import {
   isHttpException,
   isValidationError,
   type RouteParams,
+  VALIDATOR_METHODS,
   type ValidatorHandler,
   ASENA_CONTEXT_CONTRACT,
   assertContextAdapter,
@@ -142,10 +143,8 @@ type RouteRegistration = Omit<
 > &
   Partial<Pick<RouteParams<Context, ValidationSchema | ValidationSchemaWithHook>, 'staticServe' | 'validator'>>;
 
-const VALIDATOR_TARGETS = ['json', 'query', 'form', 'param', 'header'] as const;
-
 interface ValidationStep {
-  target: (typeof VALIDATOR_TARGETS)[number];
+  target: string;
   handle: () =>
     | ValidationSchemaWithHook
     | ValidationSchema
@@ -1482,9 +1481,9 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
   /** Prepare each legacy validator target once for this route, preserving method order. */
   private async prepareValidationSteps(route: RouteRegistration): Promise<ValidationStep[]> {
     const steps: ValidationStep[] = [];
-    for (const target of VALIDATOR_TARGETS) {
+    for (const target of VALIDATOR_METHODS) {
       const handler: ValidatorHandler<ValidationSchemaWithHook | ValidationSchema> | undefined =
-        route.validator?.[target];
+        route.validator && Reflect.get(route.validator, target);
       if (!handler || typeof handler.handle !== 'function') continue;
       const extract = this.createValidationExtractor(target);
       const devtools = this.devtools;
