@@ -32,6 +32,13 @@ arrowParens = "always"
 proseWrap = "preserve"
 htmlWhitespaceSensitivity = "css"
 embeddedLanguageFormatting = "auto"
+objectWrap = "preserve"
+experimentalTernaries = false
+experimentalOperatorPosition = "end"
+bracketSameLine = false
+requirePragma = false
+insertPragma = false
+singleAttributePerLine = false
 ignorePatterns = [
   ".changeset/",
   ".claude/",
