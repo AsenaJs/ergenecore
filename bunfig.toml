@@ -19,7 +19,19 @@ junit = "junit.xml"
 
 [fmt]
 printWidth = 120
+tabWidth = 2
+useTabs = false
+endOfLine = "lf"
+semi = true
 singleQuote = true
+quoteProps = "as-needed"
+jsxSingleQuote = false
+trailingComma = "all"
+bracketSpacing = true
+arrowParens = "always"
+proseWrap = "preserve"
+htmlWhitespaceSensitivity = "css"
+embeddedLanguageFormatting = "auto"
 ignorePatterns = [
   ".changeset/",
   ".claude/",
