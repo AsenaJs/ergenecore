@@ -29,7 +29,7 @@ import type { DevtoolsBus, DevtoolsStep } from './types/Devtools';
 import { HttpException, ValidationError } from './errors';
 import { shouldApplyMiddleware } from '@asenajs/asena/utils';
 import { regularFileStats, StaticFileReader, staticFileHeaders } from './utils/staticFileReader';
-import { VALIDATOR_TARGETS } from './utils/validatorTargets';
+import { isValidatorTarget, VALIDATOR_TARGETS, type ValidatorTarget } from './utils/validatorTargets';
 import type { Stats } from 'fs';
 
 /**
@@ -144,7 +144,7 @@ type RouteRegistration = Omit<
   Partial<Pick<RouteParams<Context, ValidationSchema | ValidationSchemaWithHook>, 'staticServe' | 'validator'>>;
 
 interface ValidationStep {
-  target: string;
+  target: ValidatorTarget;
   handle: () =>
     | ValidationSchemaWithHook
     | ValidationSchema
@@ -1480,6 +1480,13 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
   /** Prepare each legacy validator target once for this route, preserving method order. */
   private async prepareValidationSteps(route: RouteRegistration): Promise<ValidationStep[]> {
+    for (const declared of Object.keys(route.validator ?? {})) {
+      if (!isValidatorTarget(declared)) {
+        throw new Error(
+          `Validator target '${declared}' is not supported by this adapter (${route.method.toUpperCase()} ${route.path})`,
+        );
+      }
+    }
     const steps: ValidationStep[] = [];
     for (const target of VALIDATOR_TARGETS) {
       const handler: ValidatorHandler<ValidationSchemaWithHook | ValidationSchema> | undefined =
@@ -1611,7 +1618,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * @param target - Validation target (body, query, param, header, form)
    * @returns Data to be validated
    */
-  private createValidationExtractor(target: string): (context: Context) => Promise<any> | any {
+  private createValidationExtractor(target: ValidatorTarget): (context: Context) => Promise<any> | any {
     switch (target) {
       case 'json':
         return (context) => context.getBody();
@@ -1667,9 +1674,6 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
           return form;
         };
       }
-
-      default:
-        return () => ({});
     }
   }
 
