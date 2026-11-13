@@ -1,29 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { AsenaServerFactory } from '@asenajs/asena';
 import { isHttpException } from '@asenajs/asena/adapter';
-import * as coreDecorators from '@asenajs/asena/decorators';
+import { Config, Controller, ExceptionHandler, Middleware } from '@asenajs/asena/decorators';
 import { Get } from '@asenajs/asena/decorators/http';
+import { Catch, NotFound } from '@asenajs/asena/exception';
 import type { ServerLogger } from '@asenajs/asena/logger';
 import { ConfigService } from '../lib/defaults/ConfigService';
 import { MiddlewareService } from '../lib/defaults/MiddlewareService';
 import { HttpException } from '../lib/errors';
 import type { Context } from '../lib/ErgenecoreContextWrapper';
 import { createErgenecoreAdapter } from '../lib/utils/factory';
-
-// `@ExceptionHandler` exists from core 0.13 on. The installed core may be 0.12 (the peer range
-// allows both), where this whole file is skipped - hence the lookups instead of static imports.
-const exceptionEntry = '@asenajs/asena/exception';
-const exceptionModule: any = await import(exceptionEntry).catch(() => undefined);
-const { Config, Controller, Middleware } = coreDecorators;
-const ExceptionHandler: (...args: any[]) => ClassDecorator = (coreDecorators as any).ExceptionHandler;
-const Catch: (...types: any[]) => MethodDecorator = exceptionModule?.Catch;
-const NotFound: () => MethodDecorator = exceptionModule?.NotFound;
-// Exception handlers ship with core 0.13; the peer range also allows 0.12, which lacks them.
-const hasExceptionHandlers = typeof ExceptionHandler === 'function' && typeof Catch === 'function';
-
-if (!hasExceptionHandlers && process.env.CI) {
-  throw new Error('@ExceptionHandler/@Catch are missing: CI must run against core >= 0.13');
-}
 
 const createLogger = () => {
   const errors: string[] = [];
@@ -39,7 +25,7 @@ const createLogger = () => {
   return { logger, errors };
 };
 
-describe.skipIf(!hasExceptionHandlers)('@ExceptionHandler over Ergenecore', () => {
+describe('@ExceptionHandler over Ergenecore', () => {
   let server: any;
 
   afterEach(async () => {
