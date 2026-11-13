@@ -486,8 +486,10 @@ export class ErgenecoreContextWrapper<I extends InputMap = Record<never, never>>
    *
    * Returns `undefined` when the parameter is absent, `''` when it is present but empty (`?name=`).
    */
-  public async getQuery(name: string): Promise<string | undefined> {
-    return this.readQuery(name);
+  public getQuery(name: string): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      resolve(this.readQuery(name));
+    });
   }
 
   private readQuery(name: string): string | undefined {
