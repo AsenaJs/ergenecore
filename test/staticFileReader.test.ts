@@ -81,4 +81,37 @@ describe('StaticFileReader', () => {
     reader.release(filePath);
     expect(decode(read('d2.txt')!.bytes)).toBe('d2.txt');
   });
+
+  it('evicts the oldest file first and keeps at most maxOpen descriptors open', () => {
+    const bounded = new StaticFileReader(16, 2);
+    const filePaths = ['e1.txt', 'e2.txt', 'e3.txt'].map((name) => path.join(dir, name));
+
+    try {
+      for (const filePath of filePaths) {
+        fs.writeFileSync(filePath, path.basename(filePath));
+        expect(decode(bounded.read(filePath, fs.statSync(filePath), true).bytes)).toBe(path.basename(filePath));
+      }
+
+      expect([...bounded['files'].keys()]).toEqual(filePaths.slice(1));
+    } finally {
+      bounded.close();
+    }
+  });
+
+  it('serves from disk without keeping a descriptor when maxOpen is 0', async () => {
+    const noDescriptors = new StaticFileReader(16, 0);
+    const filePath = path.join(dir, 'f.txt');
+
+    fs.writeFileSync(filePath, 'f');
+
+    const etag = `W/"1-${Bun.file(filePath).lastModified}"`;
+    const result = noDescriptors.read(filePath, fs.statSync(filePath), true);
+    const response = noDescriptors.respond(filePath, fs.statSync(filePath), true);
+
+    expect(result.bytes).toBeUndefined();
+    expect(result.etag).toBe(etag);
+    expect(await response.text()).toBe('f');
+    expect(response.headers.get('etag')).toBe(etag);
+    expect(noDescriptors['files'].size).toBe(0);
+  });
 });
