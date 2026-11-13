@@ -137,7 +137,6 @@ function requestPathname(url: string): string {
   return start === 0 ? url : url.slice(start);
 }
 
-// The core declares staticServe and validator as required; the adapter reads both as optional.
 export type ErgenecoreRouteParams = Omit<
   RouteParams<Context, ValidationSchema | ValidationSchemaWithHook>,
   'staticServe' | 'validator'
