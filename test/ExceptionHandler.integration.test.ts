@@ -18,7 +18,12 @@ const { Config, Controller, Middleware } = coreDecorators;
 const ExceptionHandler: (...args: any[]) => ClassDecorator = (coreDecorators as any).ExceptionHandler;
 const Catch: (...types: any[]) => MethodDecorator = exceptionModule?.Catch;
 const NotFound: () => MethodDecorator = exceptionModule?.NotFound;
+// Exception handlers ship with core 0.13; the peer range also allows 0.12, which lacks them.
 const hasExceptionHandlers = typeof ExceptionHandler === 'function' && typeof Catch === 'function';
+
+if (!hasExceptionHandlers && process.env.CI) {
+  throw new Error('@ExceptionHandler/@Catch are missing: CI must run against core >= 0.13');
+}
 
 const createLogger = () => {
   const errors: string[] = [];

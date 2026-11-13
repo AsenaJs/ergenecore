@@ -13,6 +13,10 @@ const hasDevtools = (() => {
   }
 })();
 
+if (!hasDevtools && process.env.CI) {
+  throw new Error('@asenajs/asena/devtools is missing: CI must run against core >= 0.13');
+}
+
 interface ChildReport {
   hookCalls: number;
   attached: boolean;
