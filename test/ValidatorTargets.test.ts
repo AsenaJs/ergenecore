@@ -44,7 +44,6 @@ describe('validator targets', () => {
     };
 
     adapter.registerRoute({
-      staticServe: undefined,
       method: HttpMethod.POST,
       path: '/users',
       middlewares: [],

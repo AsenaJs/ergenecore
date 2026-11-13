@@ -1034,8 +1034,6 @@ describe('Rate Limiter Middleware', () => {
       });
 
       adapter.registerRoute({
-        staticServe: undefined,
-        validator: undefined,
         method: HttpMethod.GET,
         path: '/api/data',
         middlewares: [
