@@ -16,6 +16,7 @@ import {
   assertRouteContract,
   prepareContextValidation,
   type ContractContextClass,
+  VALIDATOR_METHODS,
 } from '@asenajs/asena/adapter';
 import { blue, green, red, type ServerLogger, yellow } from '@asenajs/asena/logger';
 import type { GlobalMiddlewareConfig } from '@asenajs/asena/server/config';
@@ -29,7 +30,7 @@ import type { DevtoolsBus, DevtoolsStep } from './types/Devtools';
 import { HttpException, ValidationError } from './errors';
 import { shouldApplyMiddleware } from '@asenajs/asena/utils';
 import { regularFileStats, StaticFileReader, staticFileHeaders } from './utils/staticFileReader';
-import { VALIDATOR_TARGETS, type ValidatorTarget } from './utils/validatorTargets';
+import { validatorTargetsOf, type ValidatorTarget } from './utils/validatorTargets';
 import type { Stats } from 'fs';
 
 /**
@@ -1481,7 +1482,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
   /** Prepare each legacy validator target once for this route, preserving method order. */
   private async prepareValidationSteps(route: RouteRegistration): Promise<ValidationStep[]> {
     const steps: ValidationStep[] = [];
-    for (const target of VALIDATOR_TARGETS) {
+    for (const target of validatorTargetsOf(VALIDATOR_METHODS)) {
       const handler: ValidatorHandler<ValidationSchemaWithHook | ValidationSchema> | undefined =
         route.validator?.[target];
       if (!handler || typeof handler.handle !== 'function') continue;
