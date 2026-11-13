@@ -6,6 +6,13 @@ import { Ergenecore, ErgenecoreWebsocketAdapter, type Context } from '../lib';
 import { z } from 'zod';
 import { VALIDATOR_TARGETS, validatorTargetsOf } from '../lib/utils/validatorTargets';
 
+const logger: ServerLogger = {
+  info: mock(() => {}),
+  error: mock(() => {}),
+  warn: mock(() => {}),
+  profile: mock(() => {}),
+};
+
 describe('validator targets', () => {
   let adapter: Ergenecore | undefined;
 
@@ -29,12 +36,6 @@ describe('validator targets', () => {
   });
 
   it('validate json and ignore a validator key the adapter does not handle', async () => {
-    const logger: ServerLogger = {
-      info: mock(() => {}),
-      error: mock(() => {}),
-      warn: mock(() => {}),
-      profile: mock(() => {}),
-    };
     adapter = new Ergenecore(logger, new ErgenecoreWebsocketAdapter(logger));
     adapter.setPort(0);
     const validator = {
@@ -65,5 +66,28 @@ describe('validator targets', () => {
     const accepted = await post({ name: 'asena' });
     expect(accepted.status).toBe(200);
     expect(await accepted.json()).toEqual({ ok: true });
+  });
+
+  it('fail the adapter start when the core declares a target the adapter does not handle', async () => {
+    adapter = new Ergenecore(logger, new ErgenecoreWebsocketAdapter(logger));
+    adapter.setPort(0);
+    adapter.registerRoute({
+      method: HttpMethod.POST,
+      path: '/users',
+      middlewares: [],
+      validator: { json: { handle: () => ({ schema: z.object({ name: z.string() }) }), override: false } },
+      handler: async (ctx: Context) => ctx.send({ ok: true }),
+    });
+
+    const coreTargets = [...VALIDATOR_METHODS];
+    VALIDATOR_METHODS.push('cookie');
+
+    try {
+      await expect(adapter.start()).rejects.toThrow(
+        'Validator target "cookie" is declared by @asenajs/asena but not handled by this adapter',
+      );
+    } finally {
+      VALIDATOR_METHODS.splice(0, VALIDATOR_METHODS.length, ...coreTargets);
+    }
   });
 });
