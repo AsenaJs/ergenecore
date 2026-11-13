@@ -29,7 +29,7 @@ import type { DevtoolsBus, DevtoolsStep } from './types/Devtools';
 import { HttpException, ValidationError } from './errors';
 import { shouldApplyMiddleware } from '@asenajs/asena/utils';
 import { regularFileStats, StaticFileReader, staticFileHeaders } from './utils/staticFileReader';
-import { isValidatorTarget, VALIDATOR_TARGETS, type ValidatorTarget } from './utils/validatorTargets';
+import { VALIDATOR_TARGETS, type ValidatorTarget } from './utils/validatorTargets';
 import type { Stats } from 'fs';
 
 /**
@@ -1480,13 +1480,6 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
 
   /** Prepare each legacy validator target once for this route, preserving method order. */
   private async prepareValidationSteps(route: RouteRegistration): Promise<ValidationStep[]> {
-    for (const declared of Object.keys(route.validator ?? {})) {
-      if (!isValidatorTarget(declared)) {
-        throw new Error(
-          `Validator target '${declared}' is not supported by this adapter (${route.method.toUpperCase()} ${route.path})`,
-        );
-      }
-    }
     const steps: ValidationStep[] = [];
     for (const target of VALIDATOR_TARGETS) {
       const handler: ValidatorHandler<ValidationSchemaWithHook | ValidationSchema> | undefined =

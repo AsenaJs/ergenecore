@@ -13,7 +13,7 @@ describe('validator targets', () => {
     expect(targets).toEqual(VALIDATOR_METHODS);
   });
 
-  it('refuse to start when a route declares a target the adapter does not handle', async () => {
+  it('start and ignore a validator key the adapter does not handle', async () => {
     const logger: ServerLogger = {
       info: mock(() => {}),
       error: mock(() => {}),
@@ -41,7 +41,7 @@ describe('validator targets', () => {
       (error: Error) => error.message,
     );
 
-    expect(outcome).toContain("'cookie'");
+    expect(outcome).toBe('started');
     await adapter.stop().catch(() => {});
   });
 });
