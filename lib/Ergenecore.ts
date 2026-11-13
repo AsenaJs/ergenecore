@@ -10,7 +10,6 @@ import {
   isHttpException,
   isValidationError,
   type RouteParams,
-  VALIDATOR_METHODS,
   type ValidatorHandler,
   ASENA_CONTEXT_CONTRACT,
   assertContextAdapter,
@@ -146,7 +145,7 @@ type RouteRegistration = Omit<
 const VALIDATOR_TARGETS = ['json', 'query', 'form', 'param', 'header'] as const;
 
 interface ValidationStep {
-  target: (typeof VALIDATOR_METHODS)[number];
+  target: (typeof VALIDATOR_TARGETS)[number];
   handle: () =>
     | ValidationSchemaWithHook
     | ValidationSchema
@@ -1577,7 +1576,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
         // Body targets only: z.object() strips unknown keys and the raw form parse is
         // last-value-wins, so without the write-back the handler reads a shape the schema
         // already replaced. query/param/header read the request and have no cache.
-        if (key === 'json' || key === 'body') {
+        if (key === 'json') {
           context.setValidatedBody(result.data);
         } else if (key === 'form') {
           context.setValidatedForm(result.data);
