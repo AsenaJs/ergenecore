@@ -47,7 +47,7 @@ Full documentation: [asena.sh/docs/adapters/ergenecore](https://asena.sh/docs/ad
 
 ## Contributing
 
-Contributions are welcome! Submit a Pull Request on [GitHub](https://github.com/AsenaJs/ergenecore).
+Contributions are welcome! Submit a Pull Request on [GitHub](https://github.com/AsenaJs/ergenecore). Development requires Bun 1.4.4 or newer (`bun run check` uses `bun fmt`).
 
 ## License
 
