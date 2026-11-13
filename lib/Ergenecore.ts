@@ -136,6 +136,15 @@ function requestPathname(url: string): string {
   return start === 0 ? url : url.slice(start);
 }
 
+// The core declares staticServe and validator as required; the adapter reads both as optional.
+type RouteRegistration = Omit<
+  RouteParams<Context, ValidationSchema | ValidationSchemaWithHook>,
+  'staticServe' | 'validator'
+> &
+  Partial<Pick<RouteParams<Context, ValidationSchema | ValidationSchemaWithHook>, 'staticServe' | 'validator'>>;
+
+const VALIDATOR_TARGETS = ['json', 'query', 'form', 'param', 'header'] as const;
+
 interface ValidationStep {
   target: (typeof VALIDATOR_METHODS)[number];
   handle: () =>
@@ -179,7 +188,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
   /**
    * Server hostname
    */
-  private _hostname;
+  private _hostname: string | undefined;
 
   /**
    * Bun server instance
@@ -190,7 +199,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * Route queue for deferred registration
    * Routes are queued during initialization and built when server starts
    */
-  private routeQueue: RouteParams<Context, ValidationSchemaWithHook>[] = [];
+  private routeQueue: RouteRegistration[] = [];
 
   /**
    * WebSocket route queue for deferred registration
@@ -381,7 +390,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * });
    * ```
    */
-  public registerRoute(params: RouteParams<Context, ValidationSchemaWithHook>): void {
+  public registerRoute(params: RouteRegistration): void {
     const label = `${params.method} ${params.path}`;
     if (params.validatorCache !== undefined && typeof params.validatorCache !== 'boolean') {
       throw new Error(`${label}: validatorCache must be a boolean`);
@@ -582,14 +591,13 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     // its only product was a `commonMiddlewares` array that createRouteHandler ignored - and
     // the comparison behind it was broken anyway (see the removed extractCommonMiddlewares in
     // HonoAdapter, where the same code was live and swapped guards between sibling routes).
-    const routesByPath = new Map<string, RouteParams<Context, ValidationSchemaWithHook>[]>();
+    const routesByPath = new Map<string, RouteRegistration[]>();
 
     for (const route of this.routeQueue) {
-      if (!routesByPath.has(route.path)) {
-        routesByPath.set(route.path, []);
-      }
+      const pathRoutes = routesByPath.get(route.path) ?? [];
 
-      routesByPath.get(route.path).push(route);
+      routesByPath.set(route.path, pathRoutes);
+      pathRoutes.push(route);
     }
 
     // Build Bun router object for each path
@@ -1177,7 +1185,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * @param route - Route parameters
    * @returns Bun-compatible fast path handler
    */
-  private createFastPathHandler(route: RouteParams<Context, ValidationSchemaWithHook>) {
+  private createFastPathHandler(route: RouteRegistration) {
     // Deliberately one closure. There used to be a second, picked here by `if (!this.errorHandler)`
     // - and once both were routed through `respondToError` the two bodies were identical. It was
     // also the only place the adapter read `errorHandler` at *build* time rather than per request,
@@ -1285,7 +1293,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
    * @returns Bun-compatible route handler
    */
   private createRouteHandler(
-    route: RouteParams<Context, ValidationSchemaWithHook>,
+    route: RouteRegistration,
     validateContract?: (context: Context) => Promise<void>,
     validationSteps: ValidationStep[] = [],
   ) {
@@ -1390,10 +1398,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     }
   }
 
-  private runRouteHandler(
-    route: RouteParams<Context, ValidationSchemaWithHook>,
-    context: Context,
-  ): Response | Promise<Response> {
+  private runRouteHandler(route: RouteRegistration, context: Context): Response | Promise<Response> {
     const response: unknown = route.handler(context);
 
     if (isThenable(response)) {
@@ -1476,12 +1481,11 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
   }
 
   /** Prepare each legacy validator target once for this route, preserving method order. */
-  private async prepareValidationSteps(
-    route: RouteParams<Context, ValidationSchemaWithHook>,
-  ): Promise<ValidationStep[]> {
+  private async prepareValidationSteps(route: RouteRegistration): Promise<ValidationStep[]> {
     const steps: ValidationStep[] = [];
-    for (const target of VALIDATOR_METHODS) {
-      const handler: ValidatorHandler<ValidationSchemaWithHook | ValidationSchema> = route.validator[target];
+    for (const target of VALIDATOR_TARGETS) {
+      const handler: ValidatorHandler<ValidationSchemaWithHook | ValidationSchema> | undefined =
+        route.validator?.[target];
       if (!handler || typeof handler.handle !== 'function') continue;
       const extract = this.createValidationExtractor(target);
       const devtools = this.devtools;
@@ -1555,12 +1559,14 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       const validationSchema = isThenable(handled) ? await handled : handled;
 
       // Skip if no validation schema provided
-      if ((!cachedResolved && !validationSchema) || (cachedResolved && !prepared)) {
+      const resolved = prepared ?? (validationSchema && this.unwrapValidationSchema(validationSchema));
+
+      if (!resolved) {
         continue;
       }
 
       // Use type guard to discriminate between formats
-      const { schema, hook } = prepared ?? this.unwrapValidationSchema(validationSchema);
+      const { schema, hook } = resolved;
 
       // Extract data to validate
       const extracted = extract(context);
@@ -1911,7 +1917,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     return this._hostname;
   }
 
-  public set hostname(value) {
+  public set hostname(value: string | undefined) {
     this._hostname = value;
   }
 
@@ -1941,14 +1947,14 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       const controllerName = route.controllerName || 'Unknown';
       const controllerBasePath = route.controllerBasePath || '/';
 
-      if (!groups.has(controllerName)) {
-        groups.set(controllerName, {
-          basePath: controllerBasePath,
-          routes: [],
-        });
+      let group = groups.get(controllerName);
+
+      if (!group) {
+        group = { basePath: controllerBasePath, routes: [] };
+        groups.set(controllerName, group);
       }
 
-      groups.get(controllerName).routes.push({
+      group.routes.push({
         method: route.method.toUpperCase(),
         path: route.path,
       });
@@ -1982,14 +1988,14 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
       const controllerName = wsRoute.controllerName || 'Unknown';
       const controllerBasePath = wsRoute.path; // WebSocket uses path as base path
 
-      if (!groups.has(controllerName)) {
-        groups.set(controllerName, {
-          basePath: controllerBasePath,
-          routes: [],
-        });
+      let group = groups.get(controllerName);
+
+      if (!group) {
+        group = { basePath: controllerBasePath, routes: [] };
+        groups.set(controllerName, group);
       }
 
-      groups.get(controllerName).routes.push({
+      group.routes.push({
         path: wsRoute.path,
       });
     }
@@ -2162,7 +2168,7 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     for (const [controllerName, group] of mixedControllers) {
       // Merge WebSocket routes into this controller
       const wsGroup = wsGroups.get(controllerName);
-      const allRoutes = [...group.routes, ...wsGroup.routes.map((r) => ({ method: 'WS', path: r.path }))];
+      const allRoutes = [...group.routes, ...(wsGroup?.routes ?? []).map((r) => ({ method: 'WS', path: r.path }))];
 
       lines.push(`  ${blue(controllerName)} ${yellow(`(${group.basePath})`)}`);
 
@@ -2236,14 +2242,14 @@ export class Ergenecore extends AsenaAdapter<Context, ValidationSchemaWithHook |
     const groups = new Map<string, { basePath: string; routes: { path: string }[] }>();
 
     for (const route of this.frontEndRouteQueue) {
-      if (!groups.has(route.controllerName)) {
-        groups.set(route.controllerName, {
-          basePath: route.controllerBasePath,
-          routes: [],
-        });
+      let group = groups.get(route.controllerName);
+
+      if (!group) {
+        group = { basePath: route.controllerBasePath, routes: [] };
+        groups.set(route.controllerName, group);
       }
 
-      groups.get(route.controllerName).routes.push({ path: route.path });
+      group.routes.push({ path: route.path });
     }
 
     return groups;
