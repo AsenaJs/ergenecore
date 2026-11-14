@@ -78,9 +78,7 @@ class RootRouteLevel {
 
 const guardedPaths = ['/secret', '/', '/empty-secret', '/admin/secret', '/admin', '/admin/', '/api/secret'];
 
-// Needs core >= 0.12.0 (controller middlewares attached per route). The installed core is the
-// published one, so this runs only when node_modules/@asenajs/asena is linked to a built core.
-describe.skipIf(process.env.ASENA_LINKED_CORE !== '1')('controller middlewares scope to their own routes', () => {
+describe('controller middlewares scope to their own routes', () => {
   let app: TestApp;
 
   beforeAll(async () => {

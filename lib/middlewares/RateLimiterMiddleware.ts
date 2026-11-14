@@ -418,7 +418,11 @@ export class RateLimiterMiddleware extends MiddlewareService {
       };
 
       if (this.buckets.size >= this.maxBuckets) {
-        this.buckets.delete(this.buckets.keys().next().value);
+        const oldest = this.buckets.keys().next();
+
+        if (!oldest.done) {
+          this.buckets.delete(oldest.value);
+        }
       }
     }
 
@@ -543,7 +547,7 @@ export class RateLimiterMiddleware extends MiddlewareService {
       }
     }
 
-    return hops.at(-1);
+    return hops[hops.length - 1];
   }
 
   /**

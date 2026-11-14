@@ -161,11 +161,10 @@ export class ErgenecoreWebsocketAdapter extends AsenaWebsocketAdapter {
         }
 
         // Track connection
-        if (!this.activeConnections.has(namespace)) {
-          this.activeConnections.set(namespace, new Set());
-        }
+        const connections = this.activeConnections.get(namespace) ?? new Set<string>();
 
-        this.activeConnections.get(namespace).add(ws.data.id);
+        this.activeConnections.set(namespace, connections);
+        connections.add(ws.data.id);
 
         // Start heartbeat if enabled (adapter strategy only)
         if (heartbeatInterval) {

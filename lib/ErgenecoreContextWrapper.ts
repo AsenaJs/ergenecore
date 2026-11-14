@@ -486,12 +486,8 @@ export class ErgenecoreContextWrapper<I extends InputMap = Record<never, never>>
    *
    * Returns `undefined` when the parameter is absent, `''` when it is present but empty (`?name=`).
    */
-  public getQuery(name: string): Promise<string | undefined> {
-    try {
-      return Promise.resolve(this.readQuery(name));
-    } catch (error) {
-      return Promise.reject(error as Error);
-    }
+  public async getQuery(name: string): Promise<string | undefined> {
+    return this.readQuery(name);
   }
 
   private readQuery(name: string): string | undefined {
@@ -624,7 +620,7 @@ export class ErgenecoreContextWrapper<I extends InputMap = Record<never, never>>
       (statusOrOptions === undefined || typeof statusOrOptions === 'number') &&
       (!this._mockResponse || this._mockResponse.headers.size === 0)
     ) {
-      const status = (statusOrOptions as number | undefined) ?? 200;
+      const status = statusOrOptions ?? 200;
 
       if (this._mockResponse) {
         this._mockResponse.status = status;

@@ -3,6 +3,7 @@ import { Ergenecore, ErgenecoreWebsocketAdapter } from '../lib';
 import type { ServerLogger } from '@asenajs/asena/logger';
 import type { AsenaWebSocketService, WebSocketTransport } from '@asenajs/asena/web-socket';
 import type { Server } from 'bun';
+import { websocketHandlers } from './fixtures/websocket-handlers';
 
 const mockLogger: ServerLogger = {
   info: mock(() => {}),
@@ -86,7 +87,7 @@ describe('ErgenecoreWebsocketAdapter - shutdown()', () => {
 
     const socket = createSocket('conn-1');
 
-    await adapter.websocket.open(socket as any);
+    await websocketHandlers(adapter).open(socket as any);
 
     await Bun.sleep(70);
 
@@ -167,7 +168,7 @@ describe('Ergenecore - stop()', () => {
 
     const socket = createSocket('conn-1');
 
-    await wsAdapter.websocket.open(socket as any);
+    await websocketHandlers(wsAdapter).open(socket as any);
 
     expect(wsAdapter['heartbeatIntervals'].size).toBe(1);
 

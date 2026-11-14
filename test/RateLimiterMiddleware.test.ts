@@ -1023,6 +1023,45 @@ describe('Rate Limiter Middleware', () => {
       expect(rateLimiter.getBucketState('c1')).toBeDefined();
       expect(rateLimiter.getBucketState('c3')).toBeDefined();
     });
+
+    it('should keep the maxBuckets cap when the first client has an undefined key', async () => {
+      const rateLimiter = new RateLimiterMiddleware({
+        capacity: 1000,
+        refillRate: 1,
+        maxBuckets: 3,
+        cleanupInterval: 0,
+        keyGenerator: (ctx) => ctx.getValue<string>('client'),
+      });
+
+      adapter.registerRoute({
+        method: HttpMethod.GET,
+        path: '/api/data',
+        middlewares: [
+          {
+            override: false,
+            handle: async (ctx: Context, next: () => Promise<void>) => {
+              const client = ctx.req.headers.get('x-client');
+
+              if (client) ctx.setValue('client', client);
+
+              await next();
+            },
+          },
+          {
+            override: false,
+            handle: (ctx: Context, next: () => Promise<void>) => rateLimiter.handle(ctx, next),
+          },
+        ],
+        handler: async (ctx: Context) => ctx.send({ message: 'Success' }),
+      });
+
+      server = await adapter.start();
+      baseUrl = `http://localhost:${server.port}`;
+
+      await statuses([{}, ...Array.from({ length: 49 }, (_, i) => ({ 'x-client': `client-${i}` }))]);
+
+      expect(rateLimiter['buckets'].size).toBeLessThanOrEqual(3);
+    });
   });
 
   describe('Shutdown (@OnStop)', () => {
