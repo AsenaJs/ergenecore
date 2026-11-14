@@ -36,7 +36,7 @@ class StampMiddleware extends MiddlewareService {
 
 abstract class HealthControllerBase {
   @Inject(ProbeService)
-  protected probeService: ProbeService;
+  protected probeService!: ProbeService;
 
   @Get('/live')
   public live(context: Context) {

@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { ErgenecoreWebsocketAdapter } from '../lib';
 import type { ServerLogger } from '@asenajs/asena/logger';
 import type { AsenaWebSocketService } from '@asenajs/asena/web-socket';
+import { websocketHandlers } from './fixtures/websocket-handlers';
 
 // Mock logger
 const mockLogger: ServerLogger = {
@@ -53,7 +54,7 @@ describe('CoreWebsocketAdapter - Connection Tracking & Heartbeat', () => {
         readyState: WebSocket.OPEN,
       };
 
-      await adapter.websocket.open(mockWs);
+      await websocketHandlers(adapter).open(mockWs);
 
       expect(adapter['activeConnections'].has('chat')).toBe(true);
       expect(adapter['activeConnections'].get('chat')?.has('conn-123')).toBe(true);
@@ -79,8 +80,8 @@ describe('CoreWebsocketAdapter - Connection Tracking & Heartbeat', () => {
         readyState: WebSocket.OPEN,
       };
 
-      await adapter.websocket.open(mockWs1);
-      await adapter.websocket.open(mockWs2);
+      await websocketHandlers(adapter).open(mockWs1);
+      await websocketHandlers(adapter).open(mockWs2);
 
       expect(adapter.getConnectionCount('chat')).toBe(2);
       expect(adapter['activeConnections'].get('chat')?.has('conn-123')).toBe(true);
@@ -103,11 +104,11 @@ describe('CoreWebsocketAdapter - Connection Tracking & Heartbeat', () => {
         readyState: WebSocket.OPEN,
       };
 
-      await adapter.websocket.open(mockWs);
+      await websocketHandlers(adapter).open(mockWs);
       expect(adapter.getConnectionCount('chat')).toBe(1);
 
       mockWs.readyState = WebSocket.CLOSED;
-      await adapter.websocket.close(mockWs, 1000, 'Normal closure');
+      await websocketHandlers(adapter).close(mockWs, 1000, 'Normal closure');
 
       expect(adapter.getConnectionCount('chat')).toBe(0);
     });
@@ -137,8 +138,8 @@ describe('CoreWebsocketAdapter - Connection Tracking & Heartbeat', () => {
         readyState: WebSocket.OPEN,
       };
 
-      await adapter.websocket.open(mockWs1);
-      await adapter.websocket.open(mockWs2);
+      await websocketHandlers(adapter).open(mockWs1);
+      await websocketHandlers(adapter).open(mockWs2);
 
       expect(adapter.getConnectionCount('chat')).toBe(1);
       expect(adapter.getConnectionCount('notifications')).toBe(1);
@@ -196,9 +197,9 @@ describe('CoreWebsocketAdapter - Connection Tracking & Heartbeat', () => {
         close: mock(() => {}),
       };
 
-      await adapter.websocket.open(mockWs1);
-      await adapter.websocket.open(mockWs2);
-      await adapter.websocket.open(mockWs3); // Should be rejected
+      await websocketHandlers(adapter).open(mockWs1);
+      await websocketHandlers(adapter).open(mockWs2);
+      await websocketHandlers(adapter).open(mockWs3); // Should be rejected
 
       expect(adapter.getConnectionCount('chat')).toBe(2);
       expect(mockWs3.close).toHaveBeenCalledWith(1008, 'Connection limit reached');
@@ -228,13 +229,13 @@ describe('CoreWebsocketAdapter - Connection Tracking & Heartbeat', () => {
         readyState: WebSocket.OPEN,
       };
 
-      await adapter.websocket.open(mockWs1);
-      await adapter.websocket.open(mockWs2);
+      await websocketHandlers(adapter).open(mockWs1);
+      await websocketHandlers(adapter).open(mockWs2);
       expect(adapter.getConnectionCount('chat')).toBe(2);
 
       // Close first connection
       mockWs1.readyState = WebSocket.CLOSED;
-      await adapter.websocket.close(mockWs1, 1000, 'Normal closure');
+      await websocketHandlers(adapter).close(mockWs1, 1000, 'Normal closure');
       expect(adapter.getConnectionCount('chat')).toBe(1);
 
       // Now third connection should be allowed
@@ -243,7 +244,7 @@ describe('CoreWebsocketAdapter - Connection Tracking & Heartbeat', () => {
         readyState: WebSocket.OPEN,
       };
 
-      await adapter.websocket.open(mockWs3);
+      await websocketHandlers(adapter).open(mockWs3);
       expect(adapter.getConnectionCount('chat')).toBe(2);
     });
   });
@@ -265,7 +266,7 @@ describe('CoreWebsocketAdapter - Connection Tracking & Heartbeat', () => {
         ping: mock(() => {}),
       };
 
-      await adapter.websocket.open(mockWs);
+      await websocketHandlers(adapter).open(mockWs);
 
       expect(adapter['heartbeatIntervals'].has('conn-123')).toBe(true);
     });
@@ -286,7 +287,7 @@ describe('CoreWebsocketAdapter - Connection Tracking & Heartbeat', () => {
         ping: mock(() => {}),
       };
 
-      await adapter.websocket.open(mockWs);
+      await websocketHandlers(adapter).open(mockWs);
 
       // Wait for heartbeat
       await Bun.sleep(150);
@@ -311,11 +312,11 @@ describe('CoreWebsocketAdapter - Connection Tracking & Heartbeat', () => {
         ping: mock(() => {}),
       };
 
-      await adapter.websocket.open(mockWs);
+      await websocketHandlers(adapter).open(mockWs);
       expect(adapter['heartbeatIntervals'].has('conn-123')).toBe(true);
 
       mockWs.readyState = WebSocket.CLOSED;
-      await adapter.websocket.close(mockWs, 1000, 'Normal closure');
+      await websocketHandlers(adapter).close(mockWs, 1000, 'Normal closure');
 
       expect(adapter['heartbeatIntervals'].has('conn-123')).toBe(false);
     });
@@ -339,7 +340,7 @@ describe('CoreWebsocketAdapter - Connection Tracking & Heartbeat', () => {
         close: mock(() => {}),
       };
 
-      await adapter.websocket.open(mockWs);
+      await websocketHandlers(adapter).open(mockWs);
 
       // Wait for heartbeat to trigger
       await Bun.sleep(150);
@@ -366,7 +367,7 @@ describe('CoreWebsocketAdapter - Connection Tracking & Heartbeat', () => {
         readyState: WebSocket.OPEN,
       };
 
-      await adapter.websocket.open(mockWs);
+      await websocketHandlers(adapter).open(mockWs);
 
       expect(adapter['heartbeatIntervals'].has('conn-123')).toBe(false);
     });
@@ -394,8 +395,8 @@ describe('CoreWebsocketAdapter - Connection Tracking & Heartbeat', () => {
         ping: mock(() => {}),
       };
 
-      await adapter.websocket.open(mockWs1);
-      await adapter.websocket.open(mockWs2);
+      await websocketHandlers(adapter).open(mockWs1);
+      await websocketHandlers(adapter).open(mockWs2);
 
       expect(adapter['heartbeatIntervals'].size).toBe(2);
 
@@ -423,8 +424,8 @@ describe('CoreWebsocketAdapter - Connection Tracking & Heartbeat', () => {
         readyState: WebSocket.OPEN,
       };
 
-      await adapter.websocket.open(mockWs1);
-      await adapter.websocket.open(mockWs2);
+      await websocketHandlers(adapter).open(mockWs1);
+      await websocketHandlers(adapter).open(mockWs2);
 
       expect(adapter.getConnectionCount('chat')).toBe(2);
 
@@ -467,7 +468,7 @@ describe('CoreWebsocketAdapter - Connection Tracking & Heartbeat', () => {
       };
 
       // Should not throw, but should close connection
-      await adapter.websocket.open(mockWs);
+      await websocketHandlers(adapter).open(mockWs);
 
       expect(mockWs.close).toHaveBeenCalledWith(1011, 'Internal server error: handler not found');
     });
@@ -506,8 +507,8 @@ describe('CoreWebsocketAdapter - Connection Tracking & Heartbeat', () => {
         readyState: WebSocket.OPEN,
       };
 
-      await adapter.websocket.open(mockWs1);
-      await adapter.websocket.open(mockWs2);
+      await websocketHandlers(adapter).open(mockWs1);
+      await websocketHandlers(adapter).open(mockWs2);
 
       expect(adapter.getConnectionCount('chat')).toBe(1);
       expect(adapter.getConnectionCount('notifications')).toBe(1);

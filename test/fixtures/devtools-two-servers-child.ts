@@ -1,16 +1,13 @@
 import { AsenaServerFactory } from '@asenajs/asena';
 import { Controller } from '@asenajs/asena/decorators';
 import { Get } from '@asenajs/asena/decorators/http';
+import { attachDevtoolsAgent, DEVTOOLS_HOOK } from '@asenajs/asena/devtools';
 import type { ServerLogger } from '@asenajs/asena/logger';
 import type { Context } from '../../lib/ErgenecoreContextWrapper';
 import { createErgenecoreAdapter } from '../../lib/utils/factory';
 
 // Spawned with an IPC channel by DevtoolsCore.integration.test.ts: two servers in one process,
 // attached through core's own agent, which reports to the parent as it would to `asena console`.
-
-// A variable specifier: the entry point does not exist in core 0.12, which the typecheck also runs against.
-const devtoolsEntry = '@asenajs/asena/devtools';
-const { attachDevtoolsAgent, DEVTOOLS_HOOK } = await import(devtoolsEntry);
 
 (globalThis as Record<symbol, unknown>)[DEVTOOLS_HOOK] = attachDevtoolsAgent;
 

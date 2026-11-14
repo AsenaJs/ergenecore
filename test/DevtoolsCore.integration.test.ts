@@ -1,18 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 
-// The devtools bus exists from core 0.13 on; on 0.12 (the peer range allows both) this is skipped.
-// Resolved rather than imported: loading the entry point in this process is the console's job.
-const hasDevtools = (() => {
-  try {
-    Bun.resolveSync('@asenajs/asena/devtools', import.meta.dir);
-
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
 interface ChildReport {
   hookCalls: number;
   attached: boolean;
@@ -21,7 +9,7 @@ interface ChildReport {
   warnings: string[];
 }
 
-describe.skipIf(!hasDevtools)('Ergenecore in a process asena console started', () => {
+describe('Ergenecore in a process asena console started', () => {
   let child: ReturnType<typeof Bun.spawn> | undefined;
 
   afterEach(() => {

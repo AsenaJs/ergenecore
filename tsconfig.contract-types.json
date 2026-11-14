@@ -1,7 +1,6 @@
 {
   "extends": "./tsconfig.typecheck.json",
   "compilerOptions": {
-    "strict": true,
     "skipLibCheck": false,
     "noEmit": true
   },

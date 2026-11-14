@@ -119,6 +119,10 @@ describe('socket.publish() self-delivery does not depend on the transport', () =
 
     server = await adapter.start();
 
+    if (server.port === undefined) {
+      throw new Error('boot: server has no port');
+    }
+
     return server.port;
   }
 
