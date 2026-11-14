@@ -1,5 +1,19 @@
 # @asenajs/ergenecore
 
+## 5.2.0
+
+### Minor Changes
+
+- 0009b7d: The package compiles under `strict: true`. What changes for an application:
+  
+  - The parameter type of `registerRoute()` is exported as `ErgenecoreRouteParams`. It accepts a route without `staticServe` and `validator`, and validator schemas of type `ValidationSchema` as well as `ValidationSchemaWithHook`.
+  - The `hostname` accessor is typed `string | undefined` (was `any`). Code that uses the value as a `string` without a check, or assigns anything else to it, gets a compile error.
+  - `start()` rejects with `Validator target "<key>" is declared by @asenajs/asena but not handled by this adapter` when a route has a validator and the installed `@asenajs/asena` declares a validator target this adapter does not implement. No `@asenajs/asena` version in the peer range declares one.
+
+### Patch Changes
+
+- ef66062: The `typescript` peer range now also accepts 6.x and 7.x (`^5.9.3 || ^6.0.0 || ^7.0.0`). The lower bound is unchanged.
+
 ## 5.1.0
 
 ### Minor Changes
